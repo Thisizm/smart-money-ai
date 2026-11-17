@@ -21,8 +21,8 @@ body.chart-is-fullscreen{overflow:hidden}
 <label><input type="checkbox" id="show-resistance" onchange="renderChart(lastA)"> مقاومت</label>
 <label><input type="checkbox" id="show-bull-ob" onchange="renderChart(lastA)"> اوردربلاک صعودی</label>
 <label><input type="checkbox" id="show-bear-ob" onchange="renderChart(lastA)"> اوردربلاک نزولی</label>
-</div><div id="price-chart"></div><div id="chart-levels-legend" class="chart-legend"></div><div class="rsi-caption"><b>RSI وایلدر ۱۴</b><span id="rsi-current" class="small">پس از تحلیل نمایش داده می‌شود</span></div><div id="rsi-chart"></div><div class="small chart-note">لایه‌های حمایت، مقاومت و اوردربلاک را از گزینه‌های بالا جداگانه روشن یا خاموش کن.</div></div><div class="item"><h3>خلاصه تحلیل</h3><div id="scenario-analysis">پس از تحلیل نمایش داده می‌شود.</div></div><div class="item"><div class="row" style="align-items:center;justify-content:space-between"><h3 style="margin:4px 0">ورود هوشمند</h3><button type="button" id="smart-entry-toggle" onclick="toggleSmartEntry()">فعال‌کردن نقاط ورود هوشمند</button></div><div id="smart-entry">پس از دریافت تحلیل، در صورت نیاز این بخش را فعال کن.</div><div id="smart-entry-action-status" class="small"></div></div><div class="item"><h3>واگرایی‌ها</h3><div id="divergence-panel" class="small">پس از تحلیل نمایش داده می‌شود.</div></div><div id="metrics" class="metrics"></div><div id="livequote" class="item">پس از تحلیل، نمایش قیمت هر ۵ ثانیه تازه‌سازی می‌شود؛ دریافت مجدد قیمت فلزات برای رعایت محدودیت API حداکثر هر ۳۰ ثانیه انجام می‌شود.</div><ul id="reasons"></ul><div id="mtfout"></div><div id="prodetails"></div><div id="backtestout"></div><p class="small">امتیاز تجربی احتمال موفقیت نیست. پروفایل حجم، سطوح نقدینگی و Order Block از OHLCV عمومی تقریب زده می‌شوند و داده نهادی یا تیک‌به‌تیک نیستند.</p></div></section>
-<section id="paper" hidden><div class="panel"><h3>معاملات آزمایشی با تأیید دستی</h3><p class="small">هیچ معامله‌ای با دریافت تحلیل یا اجرای اسکنر خودکار باز نمی‌شود. فقط وقتی ورود هوشمند را فعال کنی و دکمه ثبت معامله را بزنی، یک معامله آزمایشی ایجاد می‌شود. هیچ سفارش واقعی به صرافی ارسال نمی‌شود.</p><button onclick="refreshPaperTrading()">به‌روزرسانی و بررسی قیمت‌ها</button><div id="paper-status" class="muted">در حال دریافت وضعیت معاملات…</div><div id="paper-stats" class="metrics"></div><h3>معاملات فعال</h3><div id="paper-active-list"><div class="item">در حال بارگذاری…</div></div><div class="chart-panel" id="paper-chart-panel"><div class="chart-head"><b id="paper-chart-title">نمودار معامله آزمایشی</b><span id="paper-chart-status" class="small">برای دیدن نمودار، روی «نمایش نمودار» یک معامله بزن.</span></div><div id="paper-trade-chart" style="width:100%;height:300px;direction:ltr"></div><div id="paper-trade-chart-legend" class="chart-legend"></div></div><details class="paper-history" open><summary>تاریخچه معاملات بسته‌شده و لغوشده</summary><div id="paper-history-list"><div class="item">هنوز سابقه‌ای ثبت نشده است.</div></div></details><p class="small">قواعد حساب آزمایشی: ریسک پیش‌فرض هر معامله ۰٫۵٪ از موجودی، حداکثر ۳ معامله هم‌زمان، سقف ریسک باز کل ۱٫۵٪، توقف ورود جدید پس از افت روزانه ۲٪ و اهرم حداکثر ۳ برابر. حجم معامله با فاصله ورود تا حد ضرر محاسبه می‌شود. ۵۰٪ حجم در هدف اول و ۵۰٪ باقی‌مانده در هدف دوم بسته می‌شود. اگر سایت در حالت خواب باشد، پایش قیمت ممکن است متوقف شود؛ بعد از بازگشت سایت، قیمت دوباره بررسی می‌شود.</p></div></section>
+</div><label class="small" style="display:flex;align-items:center;gap:8px;margin:10px 0"><input type="checkbox" id="primary-paper-auto" onchange="togglePaperEntry('primary',this.checked)"> فعال‌سازی معامله آزمایشی از تحلیل اصلی؛ با رسیدن قیمت به نقطه ورود</label><div id="primary-paper-status" class="small"></div><div id="price-chart"></div><div id="chart-levels-legend" class="chart-legend"></div><div class="rsi-caption"><b>RSI وایلدر ۱۴</b><span id="rsi-current" class="small">پس از تحلیل نمایش داده می‌شود</span></div><div id="rsi-chart"></div><div class="small chart-note">لایه‌های حمایت، مقاومت و اوردربلاک را از گزینه‌های بالا جداگانه روشن یا خاموش کن.</div></div><div class="item"><h3>خلاصه تحلیل</h3><div id="scenario-analysis">پس از تحلیل نمایش داده می‌شود.</div></div><div class="item"><h3>ورود هوشمند</h3><div id="smart-entry">پس از تحلیل نمایش داده می‌شود.</div><div class="chart-panel" style="margin-top:10px"><div class="chart-head"><b>نمودار جداگانه ورود هوشمند</b><span class="small">نقاط این نمودار مستقل از نمودار تحلیل اصلی هستند.</span></div><div id="smart-entry-chart" style="width:100%;height:280px;direction:ltr"></div><div id="smart-entry-legend" class="chart-legend"></div></div><label class="small" style="display:flex;align-items:center;gap:8px;margin:10px 0"><input type="checkbox" id="smart-paper-auto" onchange="togglePaperEntry('smart',this.checked)"> فعال‌سازی معامله آزمایشی از ورود هوشمند؛ با رسیدن قیمت به محدوده</label><div id="smart-entry-action-status" class="small"></div><div class="small">در حالت خاموش، تحلیل و نقاط ورود همچنان نمایش داده می‌شوند. خاموش‌کردن، سفارش شرطی در انتظار را لغو می‌کند؛ معامله‌ای که قبلاً فعال شده به‌طور خودکار بسته نمی‌شود.</div></div><div class="item"><h3>واگرایی‌ها</h3><div id="divergence-panel" class="small">پس از تحلیل نمایش داده می‌شود.</div></div><div id="metrics" class="metrics"></div><div id="livequote" class="item">پس از تحلیل، نمایش قیمت هر ۵ ثانیه تازه‌سازی می‌شود؛ دریافت مجدد قیمت فلزات برای رعایت محدودیت API حداکثر هر ۳۰ ثانیه انجام می‌شود.</div><ul id="reasons"></ul><div id="mtfout"></div><div id="prodetails"></div><div id="backtestout"></div><p class="small">امتیاز تجربی احتمال موفقیت نیست. پروفایل حجم، سطوح نقدینگی و Order Block از OHLCV عمومی تقریب زده می‌شوند و داده نهادی یا تیک‌به‌تیک نیستند.</p></div></section>
+<section id="paper" hidden><div class="panel"><h3>معاملات آزمایشی با فعال‌سازی انتخابی</h3><p class="small">برای هر تحلیل، کلید جداگانه دارد. با روشن‌کردن کلید، سفارش شرطی آزمایشی ساخته می‌شود و فقط پس از رسیدن قیمت به نقطه ورود فعال می‌شود. با خاموش‌کردن کلید، سفارش شرطیِ هنوز فعال‌نشده لغو می‌شود. هیچ سفارش واقعی به صرافی ارسال نمی‌شود.</p><button onclick="refreshPaperTrading()">به‌روزرسانی و بررسی قیمت‌ها</button><div id="paper-status" class="muted">در حال دریافت وضعیت معاملات…</div><div id="paper-stats" class="metrics"></div><h3>معاملات فعال</h3><div id="paper-active-list"><div class="item">در حال بارگذاری…</div></div><div class="chart-panel" id="paper-chart-panel"><div class="chart-head"><b id="paper-chart-title">نمودار معامله آزمایشی</b><span id="paper-chart-status" class="small">برای دیدن نمودار، روی «نمایش نمودار» یک معامله بزن.</span></div><div id="paper-trade-chart" style="width:100%;height:300px;direction:ltr"></div><div id="paper-trade-chart-legend" class="chart-legend"></div></div><details class="paper-history" open><summary>تاریخچه معاملات بسته‌شده و لغوشده</summary><div id="paper-history-list"><div class="item">هنوز سابقه‌ای ثبت نشده است.</div></div></details><p class="small">قواعد حساب آزمایشی: ریسک پیش‌فرض هر معامله ۰٫۵٪ از موجودی، حداکثر ۳ معامله هم‌زمان، سقف ریسک باز کل ۱٫۵٪، توقف ورود جدید پس از افت روزانه ۲٪ و اهرم حداکثر ۳ برابر. حجم معامله با فاصله ورود تا حد ضرر محاسبه می‌شود. ۵۰٪ حجم در هدف اول و ۵۰٪ باقی‌مانده در هدف دوم بسته می‌شود. اگر سایت در حالت خواب باشد، پایش قیمت ممکن است متوقف شود؛ بعد از بازگشت سایت، قیمت دوباره بررسی می‌شود.</p></div></section>
 <section id="dominance" hidden><div class="panel"><h3>دامیننس بازار</h3><button onclick="dominance()">به‌روزرسانی</button><div id="dstatus" class="muted"></div><div id="dmetrics" class="metrics"></div><div id="dnote" class="small"></div></div></section>
 <section id="context" hidden><div class="panel"><h3>اخبار و عوامل اثرگذار</h3><div class="row"><div class="field"><label>دارایی</label><select id="asset"><option value="gold">طلا</option><option value="silver">نقره</option><option value="crypto">کریپتو</option></select></div><button onclick="context()">دریافت اخبار و اقتصاد</button><button onclick="correlations()">همبستگی بازارها</button></div><div id="corrout"></div><div id="cstatus" class="muted"></div><h3>تقویم اقتصادی آمریکا</h3><div id="calendar" class="item">در حال دریافت تقویم…</div><div id="factors"></div><h3>موقعیت‌گیری هفتگی COT طلا/نقره</h3><div id="cot"></div><h3>تقویم اقتصادی</h3><div class="item">تقویم رسمی Forex Factory را باز کن؛ ساعت‌ها و درجه اهمیت خبرها را آنجا ببین. این سایت API رسمی عمومی مستند ندارد و استفاده خودکار از داده‌هایش محدودیت شرایط استفاده دارد، بنابراین در این نسخه داده‌اش را بدون مجوز اسکرپ نمی‌کنیم.<br><a href="https://www.forexfactory.com/calendar/" target="_blank" rel="noopener">باز کردن تقویم Forex Factory</a></div><h3>اخبار</h3><div id="news"></div><h3>شاخص‌های اقتصاد آمریکا</h3><div id="macro"></div></div></section>
 <section id="scanner" hidden><div class="panel"><h3>اسکنر بازار</h3><div class="row"><div class="field"><label>بازار</label><select id="sm"><option value="all">همه</option><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div><div class="field"><label>تایم‌فریم</label><select id="st"><option>15m</option><option>1h</option><option>4h</option><option>1d</option></select></div></div><button onclick="scanner()" style="margin-top:10px">شروع اسکن</button><div id="sstatus" class="muted"></div><div id="sresults"></div></div></section>
@@ -54,9 +54,9 @@ body.chart-is-fullscreen{overflow:hidden}
  <div class="chart-panel" style="margin-top:14px"><b>تصویر سناریوی تحلیل</b><div class="small">این تصویر از سطوح همین تحلیل ساخته می‌شود؛ مسیرها شرطی‌اند و پیش‌بینی قطعی نیستند.</div><div id="op-scenario-visual" style="width:100%;overflow:auto;margin-top:8px"></div></div>
 </div></section>
 <section id="ai" hidden><div class="panel"><h3>جمع‌بندی هوش مصنوعی</h3><p class="small">ابتدا تحلیل تکنیکال یا خبرها را دریافت کن. نیازمند AI_API_KEY در Render است و استفاده از API ممکن است هزینه داشته باشد.</p><button onclick="ai()">ساخت جمع‌بندی</button><div id="aistatus" class="muted"></div><pre id="aiout"></pre></div></section>
-<details class="panel" id="resources-panel"><summary style="cursor:pointer;font-weight:700">وضعیت منابع و اتصال‌ها — برای دیدن جزئیات بزن</summary><div id="providers" class="small" style="margin-top:12px">در حال بررسی…</div></details><div class="panel small">معامله خودکار خاموش است و سفارش واقعی ثبت نمی‌شود. کلیدهای API را فقط در Environment Variables در Render وارد کن، نه در چت یا کد عمومی. هیچ سیستم معاملاتی سود تضمینی ندارد.</div></main>
+<details class="panel" id="resources-panel"><summary style="cursor:pointer;font-weight:700">وضعیت منابع و اتصال‌ها — برای دیدن جزئیات بزن</summary><div id="providers" class="small" style="margin-top:12px">در حال بررسی…</div></details><div class="panel small">معامله واقعی کاملاً خاموش است. معامله آزمایشی فقط با روشن‌کردن کلید جداگانه در نمودار تحلیل اصلی یا ورود هوشمند فعال می‌شود. کلیدهای API را فقط در Environment Variables در Render وارد کن، نه در چت یا کد عمومی. هیچ سیستم معاملاتی سود تضمینی ندارد.</div></main>
 <script>
-let paperTradesCache=[],paperChart=null,paperChartResizeObserver=null,smartEntryEnabled=false;
+let paperTradesCache=[],paperChart=null,paperChartResizeObserver=null,primaryPaperArmed=false,smartPaperArmed=false;
 let coins=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","AVAXUSDT","LTCUSDT","TRXUSDT","DOTUSDT","BCHUSDT","NEARUSDT","UNIUSDT","SUIUSDT","TONUSDT","ETCUSDT","APTUSDT","ARBUSDT"];let lastA=null,lastC=null,lastCorr=null,currentAnalysisMarket=null,currentAnalysisSymbol=null,priceChart=null,rsiChart=null,smartEntryChart=null,chartResizeObserver=null,rsiResizeObserver=null,smartEntryResizeObserver=null,livePriceLine=null;
 document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll("main section").forEach(s=>s.hidden=true);document.getElementById(b.dataset.id).hidden=false;if(b.dataset.id==="dominance")dominance();if(b.dataset.id==="opportunities")loadOpportunities(false)});
 function symbols(){let m=document.getElementById("market").value;const search=document.getElementById("symbol-search");if(search)search.parentElement.style.display=m==="crypto"?"block":"none";filterSymbols();document.getElementById("coin-count").textContent=m==="crypto"?"منبع: Binance Spot | "+coins.length+" جفت فعال USDT":m==="gold"?"منبع فلز: Twelve Data XAU/USD؛ جایگزین Yahoo Finance spot":"منبع نقره: Twelve Data XAG/USD؛ جایگزین Yahoo spot و در صورت خطا COMEX SI=F آتی (نه اسپات و نه Binance)"}
@@ -94,61 +94,65 @@ function renderScenario(d){
 }
 function renderSmartEntryChart(d,plan,side){
  const el=document.getElementById("smart-entry-chart"),legend=document.getElementById("smart-entry-legend");
- if(!el||!window.LightweightCharts||!Array.isArray(d.chart_candles)||!d.chart_candles.length){if(el)el.textContent="داده نمودار در دسترس نیست";return}
+ if(!el||!window.LightweightCharts||!Array.isArray(d.chart_candles)||!d.chart_candles.length){if(el)el.textContent="داده نمودار در دسترس نیست";return;}
  if(smartEntryChart){smartEntryChart.remove();smartEntryChart=null}
+ if(smartEntryResizeObserver){smartEntryResizeObserver.disconnect();smartEntryResizeObserver=null}
  el.innerHTML="";
- smartEntryChart=LightweightCharts.createChart(el,{width:Math.max(280,el.clientWidth||window.innerWidth-60),height:260,layout:{background:{color:"#0b172a"},textColor:"#cbd6e8",fontFamily:"Tahoma"},grid:{vertLines:{color:"#17253b"},horzLines:{color:"#17253b"}},rightPriceScale:{borderColor:"#405477"},timeScale:{borderColor:"#405477",timeVisible:true},localization:{locale:"en-US"}});
+ smartEntryChart=LightweightCharts.createChart(el,{width:Math.max(280,el.clientWidth||window.innerWidth-60),height:280,layout:{background:{color:"#0b172a"},textColor:"#cbd6e8",fontFamily:"Tahoma"},grid:{vertLines:{color:"#17253b"},horzLines:{color:"#17253b"}},rightPriceScale:{borderColor:"#405477"},timeScale:{borderColor:"#405477",timeVisible:true},localization:{locale:"en-US"}});
  const cs=smartEntryChart.addCandlestickSeries({upColor:"#28c997",downColor:"#ff7182",borderVisible:false,wickUpColor:"#28c997",wickDownColor:"#ff7182"});
  cs.setData(d.chart_candles);
  const lines=[];
  const add=(value,color,title)=>{if(value==null||!Number.isFinite(Number(value)))return;cs.createPriceLine({price:Number(value),color,lineWidth:2,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title});lines.push('<span class="legend-chip" style="border-color:'+color+'">'+title+' '+fmt(Number(value))+'</span>')};
- add(plan.zone?.low,"#38bdf8","کف ناحیه");add(plan.zone?.high,"#38bdf8","سقف ناحیه");
- add(plan.entry,"#facc15",plan.status==="CONFIRMED_ON_CLOSED_CANDLE"?"قیمت فعال‌شدن":"قیمت پیشنهادی ورود");
- add(plan.stop_loss,"#fb7185","حد ضرر");
- (plan.targets||[]).forEach((x,i)=>add(x,"#4ade80","هدف "+(i+1)));
+ if(plan){add(plan.zone?.low,"#38bdf8","کف ناحیه");add(plan.zone?.high,"#38bdf8","سقف ناحیه");add(plan.entry,"#facc15","قیمت ورود هوشمند");add(plan.stop_loss,"#fb7185","حد ضرر");(plan.targets||[]).forEach((x,i)=>add(x,"#4ade80","هدف "+(i+1)));}
+ else{lines.push('<span class="small">برای این تحلیل محدوده ورود هوشمند معتبری وجود ندارد.</span>');}
  const q=d.live_quote||{};if(q.available)add(q.price,"#7dd3fc","قیمت زنده");
- legend.innerHTML=lines.join("");
- smartEntryChart.timeScale().fitContent();
- if(typeof ResizeObserver!=="undefined"){if(smartEntryResizeObserver)smartEntryResizeObserver.disconnect();smartEntryResizeObserver=new ResizeObserver(()=>{if(smartEntryChart&&el.clientWidth>0)smartEntryChart.applyOptions({width:el.clientWidth})});smartEntryResizeObserver.observe(el)}
+ legend.innerHTML=lines.join("");smartEntryChart.timeScale().fitContent();
+ if(typeof ResizeObserver!=="undefined"){smartEntryResizeObserver=new ResizeObserver(()=>{if(smartEntryChart&&el.clientWidth>0)smartEntryChart.applyOptions({width:el.clientWidth})});smartEntryResizeObserver.observe(el)}
 }
-function toggleSmartEntry(){
- if(!lastA||lastA.quote_only)return;
- smartEntryEnabled=!smartEntryEnabled;
- renderSmartEntry(lastA);
- renderChart(lastA);
+
+function syncPaperEntryToggles(trades){
+ if(!currentAnalysisMarket||!currentAnalysisSymbol)return;
+ const rows=Array.isArray(trades)?trades:[];
+ const primary=rows.some(t=>t.status==="PENDING_ENTRY"&&t.market===currentAnalysisMarket&&t.symbol===currentAnalysisSymbol&&t.timeframe===(lastA?.timeframe||tf.value)&&t.source==="PRIMARY_ANALYSIS_ENTRY");
+ const smart=rows.some(t=>t.status==="PENDING_ENTRY"&&t.market===currentAnalysisMarket&&t.symbol===currentAnalysisSymbol&&t.timeframe===(lastA?.timeframe||tf.value)&&t.source==="SMART_ENTRY_STRUCTURAL_ZONE");
+ primaryPaperArmed=primary;smartPaperArmed=smart;
+ const a=document.getElementById("primary-paper-auto"),b=document.getElementById("smart-paper-auto");
+ if(a)a.checked=primary;if(b)b.checked=smart;
 }
-async function openSmartPaperTrade(){
- if(!smartEntryEnabled||!currentAnalysisMarket||!currentAnalysisSymbol)return;
- const status=document.getElementById("smart-entry-action-status");
- status.textContent="در حال بررسی دوباره قیمت و شرایط ورود روی سرور…";
+async function togglePaperEntry(source,enabled){
+ const market=currentAnalysisMarket,symbol=currentAnalysisSymbol,timeframe=lastA?.timeframe||tf.value;
+ const checkbox=document.getElementById(source==="primary"?"primary-paper-auto":"smart-paper-auto");
+ const status=document.getElementById(source==="primary"?"primary-paper-status":"smart-entry-action-status");
+ if(!market||!symbol||!lastA||lastA.quote_only){if(checkbox)checkbox.checked=false;return;}
+ if(status)status.textContent=enabled?"در حال بررسی تحلیل و ثبت سفارش شرطی…":"در حال لغو سفارش شرطی در انتظار…";
  try{
-  const url="/api/paper-trading/open?market="+encodeURIComponent(currentAnalysisMarket)+"&symbol="+encodeURIComponent(currentAnalysisSymbol)+"&timeframe="+encodeURIComponent(lastA?.timeframe||tf.value);
+  const endpoint=enabled?"/api/paper-trading/arm":"/api/paper-trading/disarm";
+  const url=endpoint+"?market="+encodeURIComponent(market)+"&symbol="+encodeURIComponent(symbol)+"&timeframe="+encodeURIComponent(timeframe)+"&source="+encodeURIComponent(source);
   const result=await get(url,{method:"POST"});
-  status.textContent="معامله آزمایشی با موفقیت و فقط با درخواست تو ثبت شد. وضعیت: "+(result.paper_trade?.status||"ثبت شد");
+  if(source==="primary")primaryPaperArmed=enabled;else smartPaperArmed=enabled;
+  if(status){if(enabled){const trade=result.paper_trade||{};status.textContent=trade.duplicate?"این سفارش شرطی قبلاً برای همین تحلیل ثبت شده است.":trade.status==="ACTIVE"?"قیمت همین حالا در محدوده ورود است؛ معامله آزمایشی فعال شد.":"سفارش شرطی ثبت شد؛ با رسیدن قیمت به محدوده ورود فعال می‌شود.";}else{status.textContent=(result.canceled_trade_ids||[]).length?"سفارش شرطی در انتظار لغو شد.":"سفارش در انتظار دیگری برای این تحلیل وجود نداشت؛ معامله فعال قبلی دست‌نخورده ماند.";}}
   refreshPaperTrading();
- }catch(e){status.textContent="معامله ثبت نشد: "+e.message;}
+ }catch(e){if(checkbox)checkbox.checked=!enabled;if(status)status.textContent="انجام نشد: "+e.message;if(source==="primary")primaryPaperArmed=!enabled;else smartPaperArmed=!enabled;}
+}
+async function resetPaperEntryToggles(){
+ if(primaryPaperArmed)await togglePaperEntry("primary",false);
+ if(smartPaperArmed)await togglePaperEntry("smart",false);
+ primaryPaperArmed=false;smartPaperArmed=false;
+ const a=document.getElementById("primary-paper-auto"),b=document.getElementById("smart-paper-auto");
+ if(a)a.checked=false;if(b)b.checked=false;
 }
 function renderSmartEntry(d){
- const el=document.getElementById("smart-entry"),button=document.getElementById("smart-entry-toggle"),p=d.smart_entry||{};
- if(!el)return;
- if(button)button.textContent=smartEntryEnabled?"خاموش‌کردن نقاط ورود هوشمند":"فعال‌کردن نقاط ورود هوشمند";
- if(!smartEntryEnabled){
-  el.innerHTML='<div class="small">خاموش است. تحلیل اولیه و نمودار اصلی فعال‌اند؛ برای دیدن محدوده ورود هوشمند، حد ضرر و هدف‌های آن دکمه بالا را بزن. هیچ معامله آزمایشی خودکار باز نمی‌شود.</div>';
-  return;
- }
+ const el=document.getElementById("smart-entry"),p=d.smart_entry||{};if(!el)return;
  const side=p.preferred_side==="long"?"خرید":p.preferred_side==="short"?"فروش":"نامشخص";
  const plan=p.preferred_side==="long"?p.long:p.preferred_side==="short"?p.short:null;
- const signalSide=d.signal==="BUY"?"long":d.signal==="SELL"?"short":null;
- if(!signalSide||signalSide!==p.preferred_side){el.innerHTML='<b>جهت اصلی هنوز تأیید نشده</b><div class="small">برای این تحلیل سیگنال خرید یا فروش هم‌جهت با ورود هوشمند وجود ندارد؛ معامله‌ای ثبت نمی‌شود.</div>';return;}
- const blocked=!p.risk_gate_passed;
- if(blocked){el.innerHTML='<b>ورود فعلاً مسدود است</b><div class="small">'+((p.risk_flags||[]).join("؛ ")||"فیلتر ریسک اجازه ورود نمی‌دهد.")+'</div>';return;}
- if(!plan||!plan.available||!plan.zone){el.innerHTML='<b>محدوده معتبر پیدا نشد</b><div class="small">برای این تحلیل نقطه ورود هوشمند قابل اتکا وجود ندارد؛ معامله‌ای ثبت نمی‌شود.</div>';return;}
+ if(!plan||!plan.available||!plan.zone){el.innerHTML='<b>فعلاً محدوده ورود هوشمند معتبر پیدا نشد.</b><div class="small">تحلیل اصلی و سیگنال آن مستقل از این بخش نمایش داده می‌شود.</div>';renderSmartEntryChart(d,null,side);return;}
  const ready=plan.status==="CONFIRMED_ON_CLOSED_CANDLE",invalid=plan.status==="INVALIDATED";
- const stateTitle=invalid?"سناریو باطل شد":ready?"تریگر ورود تأیید شد":"منتظر اصلاح و تأیید کندل";
- const stateNote=invalid?"سناریو با عبور قیمت از حد ابطال باطل شده است.":ready?"قیمت زنده و واکنش کندل باید همچنان معتبر بمانند.":"لمس محدوده به‌تنهایی تریگر ورود نیست؛ منتظر بسته‌شدن کندل تأییدی بمان.";
- el.innerHTML='<b>'+stateTitle+'</b><div class="smart-summary">جهت: '+side+'<br>محدوده ورود: '+fmt(plan.zone.low)+' تا '+fmt(plan.zone.high)+'<br>قیمت فعال‌سازی: '+fmt(plan.entry)+'<br>حد ضرر: '+fmt(plan.stop_loss)+'<br>هدف اول: '+fmt((plan.targets||[])[0])+'<br>هدف دوم: '+fmt((plan.targets||[])[1])+'</div><div class="small">'+stateNote+'</div>'+
-  (invalid?'':'<button type="button" onclick="openSmartPaperTrade()">ثبت معامله آزمایشی با همین ورود هوشمند</button>');
+ const stateTitle=invalid?"سناریوی ورود هوشمند باطل شده":ready?"تریگر ورود هوشمند تأیید شده":"منتظر رسیدن قیمت و تأیید ورود";
+ const stateNote=invalid?"حد ابطال ساختاری شکسته شده است.":ready?"واکنش کندل تأیید شده؛ قیمت زنده و ریسک را همچنان بررسی کن.":"محدوده ورود، پیشنهاد تحلیلی است؛ لمس محدوده با تضمین اجرا یا سود همراه نیست.";
+ el.innerHTML='<b>'+stateTitle+'</b><div class="smart-summary">جهت: '+side+'<br>محدوده ورود: '+fmt(plan.zone.low)+' تا '+fmt(plan.zone.high)+'<br>قیمت پیشنهادی/تریگر: '+fmt(plan.entry)+'<br>حد ضرر: '+fmt(plan.stop_loss)+'<br>هدف اول: '+fmt((plan.targets||[])[0])+'<br>هدف دوم: '+fmt((plan.targets||[])[1])+'</div><div class="small">'+stateNote+'</div>';
+ renderSmartEntryChart(d,plan,side);
 }
+
 function toggleChartFullscreen(){
  const panel=document.querySelector(".chart-panel");
  if(!panel)return;
@@ -222,18 +226,6 @@ function renderChart(d){
  }else{
   line(sc.bullish&&sc.bullish.trigger,"#28c997","شرط خرید",dashed,2,true);
   line(sc.bearish&&sc.bearish.trigger,"#ff7182","شرط فروش",dashed,2,true);
- }
- if(smartEntryEnabled){
-  const smart=d.smart_entry||{},side=smart.preferred_side;
-  const plan=side==="long"?smart.long:side==="short"?smart.short:null;
-  const signalSide=d.signal==="BUY"?"long":d.signal==="SELL"?"short":null;
-  if(side===signalSide&&smart.risk_gate_passed&&plan&&plan.available&&plan.zone){
-   line(plan.zone.low,"#38bdf8","کف ورود هوشمند",dashed,2,true);
-   line(plan.zone.high,"#38bdf8","سقف ورود هوشمند",dashed,2,true);
-   line(plan.entry,"#facc15","تریگر ورود هوشمند",LightweightCharts.LineStyle.Solid,2,true);
-   line(plan.stop_loss,"#fb7185","حد ضرر هوشمند",LightweightCharts.LineStyle.Solid,2,true);
-   (plan.targets||[]).forEach((value,index)=>line(value,"#4ade80","هدف هوشمند "+(index+1),LightweightCharts.LineStyle.Solid,1,index===0));
-  }
  }
 
  document.getElementById("chart-levels-legend").innerHTML=legend.join("")||'<span class="small">سطح قابل نمایش فعالی وجود ندارد.</span>';
@@ -327,9 +319,9 @@ function showA(d){
 
  document.getElementById("prodetails").innerHTML=details.join("");
  document.getElementById("ares").hidden=false;
- renderChart(d);renderScenario(d);renderSmartEntry(d);
+ renderChart(d);renderScenario(d);renderSmartEntry(d);syncPaperEntryToggles(paperTradesCache);
 }
-async function analyze(){let s=document.getElementById("astatus"),m=market.value,x=symbol.value,t=tf.value;s.textContent="در حال دریافت داده…";smartEntryEnabled=false;currentAnalysisMarket=m;currentAnalysisSymbol=x;try{let d=await get("/api/analyze?market="+m+"&symbol="+encodeURIComponent(x)+"&timeframe="+t);showA(d);let q=d.live_quote||{};s.textContent=q.available?"تحلیل کندل بسته‌شده | قیمت زنده: "+fmt(q.price)+" | "+q.source+" | تأخیر منبع: "+(q.age_seconds==null?"نامشخص":q.age_seconds+" ثانیه")+(q.is_proxy?" | قیمت آتی/Proxy":""):"تحلیل دریافت شد، اما قیمت زنده در دسترس نیست؛ قیمت کندل را قیمت لحظه‌ای فرض نکن."}catch(e){s.textContent="خطا در دریافت کندل‌های تحلیل: "+e.message;try{let qd=await get("/api/quote?market="+m+"&symbol="+encodeURIComponent(x)),q=qd.quote;if(q&&q.available){lastA={quote_only:true};document.getElementById("ares").hidden=false;document.getElementById("signal").textContent="قیمت اسپات دریافت شد؛ کندل تاریخی برای تحلیل در دسترس نیست";document.getElementById("signal").className="wait";document.getElementById("metrics").innerHTML=metric("قیمت اسپات",fmt(q.price))+metric("منبع قیمت",q.source)+metric("سن داده",q.age_seconds==null?"نامشخص":fmt(q.age_seconds)+" ثانیه");renderLiveQuote(q)}}catch(qe){}}}
+async function analyze(){let s=document.getElementById("astatus"),m=market.value,x=symbol.value,t=tf.value;s.textContent="در حال دریافت داده…";await resetPaperEntryToggles();currentAnalysisMarket=m;currentAnalysisSymbol=x;try{let d=await get("/api/analyze?market="+m+"&symbol="+encodeURIComponent(x)+"&timeframe="+t);showA(d);let q=d.live_quote||{};s.textContent=q.available?"تحلیل کندل بسته‌شده | قیمت زنده: "+fmt(q.price)+" | "+q.source+" | تأخیر منبع: "+(q.age_seconds==null?"نامشخص":q.age_seconds+" ثانیه")+(q.is_proxy?" | قیمت آتی/Proxy":""):"تحلیل دریافت شد، اما قیمت زنده در دسترس نیست؛ قیمت کندل را قیمت لحظه‌ای فرض نکن."}catch(e){s.textContent="خطا در دریافت کندل‌های تحلیل: "+e.message;try{let qd=await get("/api/quote?market="+m+"&symbol="+encodeURIComponent(x)),q=qd.quote;if(q&&q.available){lastA={quote_only:true};document.getElementById("ares").hidden=false;document.getElementById("signal").textContent="قیمت اسپات دریافت شد؛ کندل تاریخی برای تحلیل در دسترس نیست";document.getElementById("signal").className="wait";document.getElementById("metrics").innerHTML=metric("قیمت اسپات",fmt(q.price))+metric("منبع قیمت",q.source)+metric("سن داده",q.age_seconds==null?"نامشخص":fmt(q.age_seconds)+" ثانیه");renderLiveQuote(q)}}catch(qe){}}}
 async function backtest(){
  const out=document.getElementById("backtestout");out.innerHTML="در حال اجرای بک‌تست…";
  try{
@@ -610,6 +602,7 @@ async function refreshPaperTrading(){
   const active=d.active_trades||[];
   const history=d.history_trades||[];
   paperTradesCache=active;
+  syncPaperEntryToggles(active);
   activeEl.innerHTML=active.length?active.map(t=>paperTradeCard(t,true)).join(""):'<div class="item">معامله فعالی وجود ندارد.</div>';
   historyEl.innerHTML=history.length?history.map(t=>paperTradeCard(t,false)).join(""):'<div class="item">هنوز معامله‌ای بسته یا لغو نشده است.</div>';
   statusEl.textContent="حساب مجازی: 10,000 | ریسک هر معامله: 0.5% | اهرم: 1x تا 5x | آخرین بررسی: "+new Date().toLocaleTimeString("fa-IR")+" | فقط آزمایشی";

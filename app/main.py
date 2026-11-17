@@ -1245,7 +1245,7 @@ def status():
             "cot_positions": "CFTC public weekly disaggregated futures-only reports",
             "cross_asset_correlations": "BTC/ETH/gold/silver daily returns",
             "research_backtesting": "chronological holdout with fee/slippage stress",
-            "paper_trading": "automatic simulated signal capture and live-quote monitoring; no exchange orders"
+            "paper_trading": "only separately armed primary-analysis or smart-entry levels create pending simulated entries; live exchange orders are disabled"
         },
         "live_trading": False,
         "supported_timeframes": list(TIMEFRAMES.keys())
@@ -1594,20 +1594,39 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     return result
 
 
-@app.post("/api/paper-trading/open")
-def api_open_paper_trade(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str = "15m"):
-    """Create one simulated trade only after the user explicitly requests it."""
+@app.post("/api/paper-trading/arm")
+def api_arm_paper_trade(market: str = "crypto", symbol: str = "BTCUSDT",
+                        timeframe: str = "15m", source: str = "primary"):
+    """Arm one selected analysis entry as a pending paper order."""
     if timeframe not in TIMEFRAMES:
         raise HTTPException(400, "تایم‌فریم نامعتبر است")
-    if market not in ("crypto", "gold", "silver"):
-        raise HTTPException(400, "بازار نامعتبر است")
-    # Recompute server-side so stale browser data cannot create a trade.
+    if market not in ("crypto", "gold", "silver") or source not in ("primary", "smart"):
+        raise HTTPException(400, "بازار یا نوع ورود نامعتبر است")
     result = api_analyze(market=market, symbol=symbol, timeframe=timeframe)
-    trade = record_signal(result)
-    if not trade.get("recorded"):
-        reason = trade.get("reason") or "ثبت معامله انجام نشد"
-        raise HTTPException(409, "معامله آزمایشی ثبت نشد: " + str(reason))
-    return {"success": True, "paper_trade": trade, **list_paper_trades(150)}
+    trade = record_signal(result, entry_mode=source)
+    if not trade.get("recorded") and not trade.get("duplicate"):
+        reason = trade.get("reason") or "شرایط ورود معتبر نیست"
+        raise HTTPException(409, "معامله آزمایشی فعال نشد: " + str(reason))
+    return {"success": True, "source": source, "paper_trade": trade, **list_paper_trades(150)}
+
+
+@app.post("/api/paper-trading/disarm")
+def api_disarm_paper_trade(market: str = "crypto", symbol: str = "BTCUSDT",
+                           timeframe: str = "15m", source: str = "primary"):
+    """Cancel only matching pending entries; an already active trade keeps its normal exits."""
+    if market not in ("crypto", "gold", "silver") or source not in ("primary", "smart"):
+        raise HTTPException(400, "بازار یا نوع ورود نامعتبر است")
+    trades = list_paper_trades(300).get("active_trades", [])
+    canceled = []
+    expected_source = "PRIMARY_ANALYSIS_ENTRY" if source == "primary" else "SMART_ENTRY_STRUCTURAL_ZONE"
+    for trade in trades:
+        if (trade.get("market") == market and trade.get("symbol") == symbol
+                and trade.get("timeframe") == timeframe and trade.get("source") == expected_source
+                and trade.get("status") == "PENDING_ENTRY"):
+            result = close_paper_trade(trade["id"])
+            if result.get("closed"):
+                canceled.append(trade["id"])
+    return {"success": True, "source": source, "canceled_trade_ids": canceled, **list_paper_trades(150)}
 
 
 @app.get("/api/paper-trading")
