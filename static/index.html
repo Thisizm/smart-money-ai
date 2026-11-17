@@ -577,7 +577,7 @@ function aiBrainEscape(value){return String(value==null?"—":value).replace(/[&
 function aiBrainList(items){return Array.isArray(items)&&items.length?'<ul>'+items.map(x=>'<li>'+aiBrainEscape(x)+'</li>').join("")+'</ul>':'<span class="small">موردی گزارش نشد</span>';}
 async function runAiBrain(){
  const status=document.getElementById("ai-brain-status"),out=document.getElementById("ai-brain-result");
- status.textContent="در حال جمع‌آوری داده‌های پروژه از منابع بازار و ارسال به Gemini…";
+ status.textContent="در حال جمع‌آوری داده‌های بازار و تحلیل مستقل Gemini…";
  out.innerHTML="";
  try{
   const payload={market:document.getElementById("market").value,symbol:document.getElementById("symbol").value,timeframe:document.getElementById("tf").value};
@@ -586,12 +586,16 @@ async function runAiBrain(){
   const zone=a.entry_zone;
   const plan=zone?'<div class="item"><b>محدوده ورود:</b> '+fmt(zone.low)+' تا '+fmt(zone.high)+'<br><b>حد ضرر:</b> '+fmt(a.stop_loss)+'<br><b>هدف‌ها:</b> '+(a.targets||[]).map(fmt).join(" / ")+'<br><b>تریگر:</b> '+aiBrainEscape(a.entry_trigger)+'</div>':'<div class="item">فعلاً ورود عددی معتبر صادر نشده است.</div>';
   const cmp=data.technical_comparison||{};
+  const timings=data.performance_ms||{};
+  const timingLabels={technical:"تحلیل تایم‌فریم انتخابی",six_timeframes:"تحلیل شش تایم‌فریم",macro_news_cot:"اخبار، اقتصاد و COT",correlations:"همبستگی بازارها",dominance:"دامیننس",economic_calendar:"تقویم اقتصادی",gemini:"پاسخ Gemini",total:"مجموع زمان"};
+  const timingRows=Object.entries(timingLabels).filter(([key])=>Number.isFinite(Number(timings[key]))).map(([key,label])=>'<div class="row" style="justify-content:space-between;gap:12px"><span>'+label+'</span><b>'+((Number(timings[key])/1000).toFixed(2))+' ثانیه</b></div>').join("");
   out.innerHTML='<div class="metrics">'+metric("تصمیم هوش مصنوعی",side)+metric("کیفیت شواهد",fmt(a.setup_quality)+"/100")+metric("موتور تکنیکال",aiBrainEscape(cmp.signal||"—"))+metric("هم‌جهتی تایم‌فریم‌ها",fmt(cmp.multi_timeframe_alignment)+"%")+'</div>'+
    '<div class="item"><b>جمع‌بندی:</b><br>'+aiBrainEscape(a.summary)+'<br><b>رژیم بازار:</b> '+aiBrainEscape(a.market_regime)+'<br><b>جهت تایم‌فریم بالاتر:</b> '+aiBrainEscape(a.higher_timeframe_bias)+'</div>'+plan+
    '<div class="item"><b>دلایل صعودی</b>'+aiBrainList(a.bullish_factors)+'</div><div class="item"><b>دلایل نزولی</b>'+aiBrainList(a.bearish_factors)+'</div>'+
    '<div class="item"><b>تعارض‌ها</b>'+aiBrainList(a.conflicts)+'</div><div class="item"><b>ریسک‌ها</b>'+aiBrainList(a.risk_flags)+'</div>'+
    '<div class="item"><b>کیفیت و محدودیت داده</b>'+aiBrainList(a.data_quality)+'<br><b>شرط باطل شدن تحلیل:</b> '+aiBrainEscape(a.invalidation)+'</div>'+
    '<div class="item"><b>مقایسه با موتور فعلی</b><br>سیگنال تکنیکال: '+aiBrainEscape(cmp.signal)+' | جهت چندتایم‌فریمی: '+aiBrainEscape(cmp.multi_timeframe_overall)+'<br>ورود موتور فعلی: '+fmt(cmp.entry)+' | حد ضرر: '+fmt(cmp.stop_loss)+' | اهداف: '+(cmp.targets||[]).map(fmt).join(" / ")+'</div>'+
+   '<details class="item"><summary><b>زمان هر مرحله (برای پیدا کردن عامل کندی)</b></summary><div style="margin-top:8px">'+(timingRows||'<span class="small">اطلاعات زمان‌بندی موجود نیست.</span>')+'</div></details>'+
    '<div class="small">منبع هوش مصنوعی: '+aiBrainEscape(data.provider)+' | مدل: '+aiBrainEscape(data.model)+' | داده‌ها: '+Object.entries(data.data_groups_used||{}).filter(x=>x[1]).map(x=>aiBrainEscape(x[0])).join("، ")+'<br>این تحلیل معامله آزمایشی یا واقعی باز نکرده است.</div>';
   status.textContent="تحلیل مستقل آماده شد | "+(data.cache_hit?"از حافظه ۶۰ ثانیه‌ای":"داده تازه")+" | "+new Date(data.updated_at).toLocaleString("fa-IR");
  }catch(e){status.textContent="تحلیل هوش مصنوعی انجام نشد: "+e.message+" | اگر سهمیه رایگان تمام شده، بعداً دوباره امتحان کن."}
