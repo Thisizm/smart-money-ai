@@ -184,11 +184,9 @@ def get_yahoo_metals_candles(market, timeframe):
     tickers = spot_tickers.get(market)
     if not tickers:
         raise RuntimeError("Unsupported metal market")
-    # Silver has no Yahoo spot ticker. Try the COMEX continuous future as a
-    # clearly labelled last-resort proxy; this is not XAG/USD spot or Binance.
-    if market == "silver":
-        tickers = tickers + futures_tickers[market]
-    elif ALLOW_METAL_FUTURES_PROXY:
+    # Never silently substitute futures for spot. A futures proxy is opt-in
+    # because it can materially diverge from XAG/USD/XAU/USD.
+    if ALLOW_METAL_FUTURES_PROXY:
         tickers = tickers + futures_tickers[market]
 
     settings = {
@@ -309,9 +307,8 @@ def get_yahoo_metals_quote(market):
         raise RuntimeError("Unsupported Yahoo Finance metal")
 
     tickers = [spot_tickers[market]]
-    # Yahoo Finance does not expose a usable XAGUSD=X symbol in this deployment.
-    # SI=F is a COMEX continuous futures proxy, not spot and not Binance TradFi.
-    if market == "silver" or ALLOW_METAL_FUTURES_PROXY:
+    # A COMEX continuous future is not a spot quote. Only use it when explicitly enabled.
+    if ALLOW_METAL_FUTURES_PROXY:
         tickers.append(futures_tickers[market])
 
     errors = []
@@ -1094,8 +1091,8 @@ def status():
         "providers": {
             "crypto_prices": "Binance Spot live ticker + closed OHLCV candles for all active USDT pairs",
             "crypto_derivatives": "Binance public futures funding/OI/long-short + spot order-book snapshot",
-            "metals_prices": "Twelve Data XAU/USD and XAG/USD spot when entitled; Yahoo Finance fallback, including COMEX SI=F futures proxy for silver",
-            "metal_instrument_note": "Silver SI=F fallback is a COMEX continuous futures proxy, not XAG/USD spot; provider feeds can differ.",
+            "metals_prices": "Twelve Data spot when entitled; Yahoo spot fallback only. COMEX futures proxy is disabled unless ALLOW_METAL_FUTURES_PROXY=true.",
+            "metal_instrument_note": "Spot and futures are never mixed by default. If no spot feed is available, the metal analysis returns unavailable instead of silently substituting a futures contract.",
             "crypto_dominance": "Market-cap dominance from CoinGecko" + ("; CoinMarketCap fallback key configured" if COINMARKETCAP_API_KEY else "; optional CoinMarketCap fallback key not set") + "; Binance Spot is used for exchange prices, not global dominance",
             "liquidation_heatmap": "غیرفعال؛ خوشه‌های تخمینی از امتیازدهی و رابط حذف شدند",
             "global_news": "GDELT DOC 2.0",
