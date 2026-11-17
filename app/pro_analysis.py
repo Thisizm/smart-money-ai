@@ -11,8 +11,7 @@ def _ema_series(values, period):
     if not values:
         return []
     alpha = 2.0 / (period + 1.0)
-    seed = sum(values[:period]) / min(period, len(values))
-    out = [seed]
+    out = [values[0]]
     for value in values[1:]:
         out.append(value * alpha + out[-1] * (1.0 - alpha))
     return out
