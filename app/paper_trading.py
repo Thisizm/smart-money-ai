@@ -244,8 +244,10 @@ def _portfolio_risk_state():
     }
 
 
-def record_signal(result):
-    """Create a pending simulated limit entry from the signal structural zone."""
+def record_signal(result, entry_mode="smart"):
+    """Create a pending simulated entry from the selected analysis plan."""
+    if entry_mode not in ("primary", "smart"):
+        return {"recorded": False, "reason": "invalid_entry_mode"}
     if not isinstance(result, dict) or result.get("signal") not in ("BUY", "SELL"):
         return {"recorded": False, "reason": "no_directional_signal"}
     if (result.get("risk_management") or {}).get("risk_gate_passed") is False:
@@ -264,28 +266,37 @@ def record_signal(result):
     if age is None or age > (60 if market == "crypto" else 900):
         return {"recorded": False, "reason": "stale_quote"}
     side = "LONG" if result["signal"] == "BUY" else "SHORT"
-    smart = result.get("smart_entry") or {}
-    smart_plan = smart.get("long" if side == "LONG" else "short") or {}
-    # Never create a paper trade from the broad signal entry as a fallback.
-    # The user must explicitly activate smart entry and the structural plan must exist.
-    if not smart_plan.get("available") or smart_plan.get("status") in (
-        "INVALIDATED", "BLOCKED_BY_ECONOMIC_CALENDAR", "BLOCKED_BY_EXECUTION_QUALITY"
-    ):
-        return {"recorded": False, "reason": "smart_entry_not_available"}
     try:
         live_price = float(quote["price"])
-        zone = smart_plan.get("zone") or {}
-        if zone.get("low") is None or zone.get("high") is None:
-            raise ValueError("smart_entry_zone_required")
-        entry_low, entry_high = sorted((float(zone["low"]), float(zone["high"])))
-        entry = float(smart_plan.get("entry_reference") or ((entry_low + entry_high) / 2))
-        stop = float(smart_plan["stop_loss"])
-        targets = [float(x) for x in smart_plan.get("targets", [])]
-        source = "SMART_ENTRY_STRUCTURAL_ZONE"
+        if entry_mode == "smart":
+            smart = result.get("smart_entry") or {}
+            smart_plan = smart.get("long" if side == "LONG" else "short") or {}
+            if not smart_plan.get("available") or smart_plan.get("status") in (
+                "INVALIDATED", "BLOCKED_BY_ECONOMIC_CALENDAR", "BLOCKED_BY_EXECUTION_QUALITY"
+            ):
+                return {"recorded": False, "reason": "smart_entry_not_available"}
+            zone = smart_plan.get("zone") or {}
+            if zone.get("low") is None or zone.get("high") is None:
+                raise ValueError("smart_entry_zone_required")
+            entry_low, entry_high = sorted((float(zone["low"]), float(zone["high"])))
+            entry = float(smart_plan.get("entry_reference") or ((entry_low + entry_high) / 2))
+            stop = float(smart_plan["stop_loss"])
+            targets = [float(x) for x in smart_plan.get("targets", [])]
+            source = "SMART_ENTRY_STRUCTURAL_ZONE"
+        else:
+            base_plan = result.get("trade_plan") or {}
+            entry = float(base_plan.get("entry") or result.get("entry_price"))
+            tolerance = max(abs(entry) * 0.0005, float(result.get("atr") or 0) * 0.05)
+            entry_low, entry_high = entry - tolerance, entry + tolerance
+            stop = float(base_plan.get("stop_loss") or result.get("stop_loss"))
+            targets = [float(x) for x in (base_plan.get("targets") or [
+                result.get("take_profit_1"), result.get("take_profit_2"), result.get("take_profit_3")
+            ]) if x is not None]
+            source = "PRIMARY_ANALYSIS_ENTRY"
         if len(targets) < 2:
             raise ValueError("two_targets_required")
     except (TypeError, ValueError, KeyError):
-        return {"recorded": False, "reason": "no_valid_smart_entry_zone_or_trade_levels"}
+        return {"recorded": False, "reason": "no_valid_entry_zone_or_trade_levels"}
     risk = entry - stop if side == "LONG" else stop - entry
     if risk <= 0:
         return {"recorded": False, "reason": "invalid_structural_stop"}
@@ -293,19 +304,15 @@ def record_signal(result):
         return {"recorded": False, "reason": "invalid_long_levels"}
     if side == "SHORT" and (targets[0] >= entry or entry_high >= stop):
         return {"recorded": False, "reason": "invalid_short_levels"}
-    # Virtual-account sizing: equity-adjusted fixed fractional risk plus portfolio/daily drawdown guards.
     limits = _portfolio_risk_state()
     initial_balance = limits["equity"]
     risk_cash = limits["risk_cash"]
     if limits["open_count"] >= limits["max_open"]:
-        return {"recorded": False, "reason": "portfolio_max_open_trades",
-                "risk_state": limits}
+        return {"recorded": False, "reason": "portfolio_max_open_trades", "risk_state": limits}
     if limits["daily_pnl"] <= -limits["daily_loss_limit_cash"]:
-        return {"recorded": False, "reason": "daily_loss_limit_reached",
-                "risk_state": limits}
+        return {"recorded": False, "reason": "daily_loss_limit_reached", "risk_state": limits}
     if limits["risk_in_use"] + risk_cash > limits["portfolio_risk_limit_cash"]:
-        return {"recorded": False, "reason": "portfolio_total_risk_limit",
-                "risk_state": limits}
+        return {"recorded": False, "reason": "portfolio_total_risk_limit", "risk_state": limits}
     risk_per_unit = abs(entry - stop)
     quantity = risk_cash / risk_per_unit
     max_leverage = limits["max_leverage"]
@@ -317,9 +324,9 @@ def record_signal(result):
     status = "ACTIVE" if touched else "PENDING_ENTRY"
     filled_entry = live_price if touched else entry
     candle_time = result.get("last_candle_time")
-    fingerprint = "|".join(str(x) for x in (market, result.get("symbol", ""), result.get("timeframe", ""), candle_time or result.get("updated_at", ""), result["signal"]))
+    fingerprint = "|".join(str(x) for x in (market, result.get("symbol", ""), result.get("timeframe", ""), candle_time or result.get("updated_at", ""), result["signal"], entry_mode))
     now = _now()
-    note = "ورود آزمایشی؛ قیمت داخل محدوده بود." if touched else "سفارش شرطی آزمایشی؛ با رسیدن قیمت به محدوده ورود فعال می‌شود."
+    note = "ورود آزمایشی؛ قیمت داخل محدوده بود." if touched else "سفارش شرطی آزمایشی؛ با رسیدن قیمت به نقطه ورود فعال می‌شود."
     with _LOCK, _connect() as con:
         cur = con.execute("""
             INSERT OR IGNORE INTO paper_trades
@@ -330,9 +337,10 @@ def record_signal(result):
             row = con.execute("SELECT id, status FROM paper_trades WHERE fingerprint=?", (fingerprint,)).fetchone()
             return {"recorded": False, "duplicate": True, "trade_id": row["id"], "status": row["status"]}
         return {"recorded": True, "trade_id": cur.lastrowid, "status": status,
-                "entry_zone": [entry_low, entry_high], "entry_price": filled_entry if touched else None,
-                "position_size": quantity, "notional": notional, "margin_used": margin_used,
-                "risk_cash": risk_cash, "risk_percent": limits["risk_percent"],
+                "source": source, "entry_zone": [entry_low, entry_high],
+                "entry_price": filled_entry if touched else None, "position_size": quantity,
+                "notional": notional, "margin_used": margin_used, "risk_cash": risk_cash,
+                "risk_percent": limits["risk_percent"],
                 "portfolio_risk_after_entry": limits["risk_in_use"] + risk_cash,
                 "equity": initial_balance}
 
