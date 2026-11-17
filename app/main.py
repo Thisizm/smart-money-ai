@@ -25,6 +25,8 @@ DB_PATH = os.getenv("DATABASE_PATH", os.path.join(ROOT_DIR, "alerts.db"))
 TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
 ALLOW_METAL_FUTURES_PROXY = os.getenv("ALLOW_METAL_FUTURES_PROXY", "false").lower() in ("1", "true", "yes")
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "")
+COINMARKETCAP_API_KEY = os.getenv("COINMARKETCAP_API_KEY", "")
+COINGLASS_API_KEY = os.getenv("COINGLASS_API_KEY", "")
 FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 AI_API_KEY = os.getenv("AI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
 AI_MODEL = os.getenv("AI_MODEL", "gpt-6-luna")
@@ -58,6 +60,10 @@ QUOTE_CACHE = {}
 QUOTE_CACHE_LOCK = threading.Lock()
 BINANCE_SYMBOLS_CACHE = {"at": 0.0, "symbols": list(CRYPTO_DEFAULT)}
 BINANCE_SYMBOLS_LOCK = threading.Lock()
+DOMINANCE_CACHE = {"at": 0.0, "data": None}
+DOMINANCE_LOCK = threading.Lock()
+COINGLASS_CACHE = {}
+COINGLASS_LOCK = threading.Lock()
 
 
 def utc_now():
@@ -955,7 +961,8 @@ def status():
             "crypto_derivatives": "Binance public futures funding/OI/long-short + spot order-book snapshot",
             "metals_prices": "Twelve Data XAU/USD and XAG/USD spot when entitled; Yahoo Finance fallback, including COMEX SI=F futures proxy for silver",
             "metal_instrument_note": "Silver SI=F fallback is a COMEX continuous futures proxy, not XAG/USD spot; provider feeds can differ.",
-            "crypto_dominance": "CoinGecko global endpoint with source timestamp" + ("; API key configured" if COINGECKO_API_KEY else "; public endpoint"),
+            "crypto_dominance": "Market-cap dominance from CoinGecko; optional CoinMarketCap fallback; Binance Spot is used for exchange prices, not global dominance",
+            "liquidation_heatmap": "CoinGlass aggregated liquidation heatmap " + ("API key configured; Professional/Enterprise plan required" if COINGLASS_API_KEY else "COINGLASS_API_KEY required; Professional/Enterprise plan required"),
             "global_news": "GDELT DOC 2.0",
             "macro_indicators": "FRED " + ("configured" if FRED_API_KEY else "key_required"),
             "ai_synthesis": "OpenAI " + ("configured" if AI_API_KEY else "key_required"),
@@ -1062,6 +1069,15 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     result["analysis_price"] = result.get("price")
     result["candle_source"] = (candles[-1].get("source") if candles else None) or ("Binance Spot" if market == "crypto" else "Twelve Data / Yahoo Finance metals fallback")
     result["live_quote"] = get_live_quote(market, symbol)
+    if market == "crypto":
+        heatmap = get_coinglass_liquidation_heatmap(symbol)
+        result["liquidation_heatmap"] = heatmap
+        result["liquidation_context"] = build_liquidation_context(
+            result, heatmap, (result["live_quote"].get("price") if result["live_quote"].get("available") else result.get("price"))
+        )
+    else:
+        result["liquidation_heatmap"] = {"available": False, "note": "نقشه لیکوییدیشن CoinGlass فقط برای بازار کریپتو فعال است."}
+        result["liquidation_context"] = {"available": False, "note": "برای فلزات نقشه لیکوییدیشن کریپتو کاربرد ندارد."}
     chart_bars = completed_candles(candles, timeframe)[-220:]
     result["chart_candles"] = [{
         "time": int(c["time"] // 1000),
@@ -1071,6 +1087,12 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     } for c in chart_bars]
     result["chart_source"] = result.get("candle_source")
     result["chart_source_symbol"] = (chart_bars[-1].get("source_symbol") if chart_bars else None) or (symbol if market == "crypto" else None)
+    rsi_values = (result.get("advanced_analysis") or {}).get("rsi_series") or []
+    rsi_values = rsi_values[-len(chart_bars):] if chart_bars else []
+    result["rsi_chart"] = [
+        {"time": int(candle["time"] // 1000), "value": value}
+        for candle, value in zip(chart_bars, rsi_values) if value is not None
+    ]
     marker_time = int(chart_bars[-1]["time"] // 1000) if chart_bars else None
     result["chart_markers"] = []
     if marker_time and result.get("signal") == "BUY":
@@ -1231,31 +1253,241 @@ def correlations():
     return result
 
 
+def _as_float(value):
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _dominance_timestamp(value):
+    if value is None:
+        return None
+    try:
+        if isinstance(value, (int, float)) or str(value).isdigit():
+            stamp = int(float(value))
+            return datetime.fromtimestamp(stamp, tz=timezone.utc)
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _build_dominance_payload(source, raw):
+    if source == "CoinGecko":
+        global_data = raw.get("data", {})
+        shares = global_data.get("market_cap_percentage", {})
+        btc = _as_float(shares.get("btc"))
+        eth = _as_float(shares.get("eth"))
+        usdt = _as_float(shares.get("usdt"))
+        updated = _dominance_timestamp(global_data.get("updated_at"))
+        market_cap = (global_data.get("total_market_cap") or {}).get("usd")
+        volume = (global_data.get("total_volume") or {}).get("usd")
+    else:
+        global_data = raw.get("data", {})
+        quote = (global_data.get("quote") or {}).get("USD", {})
+        btc = _as_float(global_data.get("btc_dominance"))
+        eth = _as_float(global_data.get("eth_dominance"))
+        usdt = _as_float(global_data.get("usdt_dominance"))
+        updated = _dominance_timestamp(global_data.get("last_updated") or quote.get("last_updated"))
+        market_cap = quote.get("total_market_cap")
+        volume = quote.get("total_volume_24h")
+
+    if btc is None or eth is None or not (0 <= btc <= 100 and 0 <= eth <= 100):
+        raise RuntimeError(source + " returned incomplete or invalid market-cap dominance values")
+    others = max(0.0, 100.0 - btc - eth - usdt) if usdt is not None else None
+    return {
+        "available": True,
+        "btc": round(btc, 4),
+        "eth": round(eth, 4),
+        "usdt": round(usdt, 4) if usdt is not None else None,
+        "others_ex_btc_eth_usdt": round(others, 4) if others is not None else None,
+        "total_market_cap_usd": market_cap,
+        "total_volume_24h_usd": volume,
+        "updated_at": utc_now(),
+        "source_updated_at": updated.isoformat() if updated else None,
+        "source_age_seconds": max(0, int(time.time() - updated.timestamp())) if updated else None,
+        "source": source + " market-cap data",
+        "stale": False,
+        "note": (
+            "دامیننس بر اساس سهم ارزش بازار و عرضه در گردش است، نه حجم معاملات Binance. "
+            "Binance Spot برای قیمت و حجم همان صرافی استفاده می‌شود و API عمومی آن دامیننس کل بازار را منتشر نمی‌کند. "
+            "روش پوشش بازار و عرضه در گردش CoinGecko/CoinMarketCap ممکن است با TradingView CRYPTOCAP تفاوت داشته باشد. "
+            "Others در این صفحه باقیمانده پس از BTC، ETH و USDT است و لزوماً با OTHERS.D برابر نیست."
+        )
+    }
+
+
 @app.get("/api/dominance")
 def dominance():
-    headers = {"x-cg-demo-api-key": COINGECKO_API_KEY} if COINGECKO_API_KEY else {}
-    try:
-        data = fetch_json("https://api.coingecko.com/api/v3/global", headers=headers)
-        global_data = data.get("data", {})
-        shares = global_data.get("market_cap_percentage", {})
-        btc = float(shares.get("btc", 0))
-        eth = float(shares.get("eth", 0))
-        usdt = float(shares.get("usdt", 0))
-        source_updated = global_data.get("updated_at")
-        source_updated_at = datetime.fromtimestamp(int(source_updated), tz=timezone.utc).isoformat() if source_updated else None
-        return {
-            "total_market_cap_usd": global_data.get("total_market_cap", {}).get("usd"),
-            "total_volume_24h_usd": global_data.get("total_volume", {}).get("usd"),
-            "btc": btc, "eth": eth, "usdt": usdt,
-            "others_ex_btc_eth_usdt": max(0, 100 - btc - eth - usdt),
-            "updated_at": utc_now(), "source_updated_at": source_updated_at,
-            "source_age_seconds": max(0, int(time.time() - int(source_updated))) if source_updated else None,
-            "source": "CoinGecko",
-            "note": "CoinGecko market_cap_percentage is not guaranteed to match TradingView CRYPTOCAP because provider coverage and circulating-supply methodology can differ. Others here is the residual after BTC, ETH and USDT, not necessarily TradingView OTHERS.D."
-        }
-    except Exception as exc:
-        raise HTTPException(502, "داده دامیننس فعلاً در دسترس نیست؛ وضعیت API CoinGecko را بررسی کن. " + str(exc)[:120])
+    now = time.time()
+    with DOMINANCE_LOCK:
+        cached = DOMINANCE_CACHE.get("data")
+        if cached and now - DOMINANCE_CACHE.get("at", 0) < 90:
+            result = dict(cached)
+            result["cache_hit"] = True
+            return result
 
+        errors = []
+        headers = {"x-cg-demo-api-key": COINGECKO_API_KEY} if COINGECKO_API_KEY else {}
+        try:
+            raw = fetch_json("https://api.coingecko.com/api/v3/global", headers=headers, timeout=12)
+            result = _build_dominance_payload("CoinGecko", raw)
+            DOMINANCE_CACHE.update({"at": now, "data": result})
+            result["cache_hit"] = False
+            return result
+        except Exception as exc:
+            errors.append("CoinGecko: " + str(exc)[:140])
+
+        if COINMARKETCAP_API_KEY:
+            try:
+                raw = fetch_json(
+                    "https://pro-api.coinmarketcap.com/v1/global-metrics/quotes/latest?convert=USD",
+                    headers={"X-CMC_PRO_API_KEY": COINMARKETCAP_API_KEY},
+                    timeout=12
+                )
+                result = _build_dominance_payload("CoinMarketCap", raw)
+                result["fallback_used"] = True
+                DOMINANCE_CACHE.update({"at": now, "data": result})
+                result["cache_hit"] = False
+                return result
+            except Exception as exc:
+                errors.append("CoinMarketCap: " + str(exc)[:140])
+
+        if cached and now - DOMINANCE_CACHE.get("at", 0) < 1800:
+            result = dict(cached)
+            result["stale"] = True
+            result["cache_age_seconds"] = max(0, int(now - DOMINANCE_CACHE.get("at", now)))
+            result["warning"] = "منبع دامیننس موقتاً پاسخ نداد؛ آخرین داده معتبر به‌صورت موقت نمایش داده می‌شود."
+            result["errors"] = errors
+            return result
+
+    raise HTTPException(502, "داده دامیننس از منابع ارزش بازار دریافت نشد. " + " | ".join(errors))
+
+
+def get_coinglass_liquidation_heatmap(symbol, range_name="24h"):
+    if not COINGLASS_API_KEY:
+        return {
+            "available": False, "source": "CoinGlass",
+            "note": "برای نمایش نقشه لیکوییدیشن، COINGLASS_API_KEY را در Render تنظیم کن؛ endpoint نقشه تجمیعی به پلن Professional یا Enterprise نیاز دارد."
+        }
+
+    base_symbol = str(symbol).upper().replace("USDT", "").replace("USD", "")
+    if not base_symbol or not base_symbol.isalnum():
+        return {"available": False, "source": "CoinGlass", "note": "نماد برای CoinGlass معتبر نیست."}
+    if range_name not in ("12h", "24h", "3d", "7d", "30d", "90d", "180d", "1y"):
+        range_name = "24h"
+
+    cache_key = base_symbol + ":" + range_name
+    now = time.time()
+    with COINGLASS_LOCK:
+        cached = COINGLASS_CACHE.get(cache_key)
+        if cached and now - cached["at"] < 60:
+            return cached["data"]
+
+        try:
+            params = urllib.parse.urlencode({"symbol": base_symbol, "range": range_name})
+            raw = fetch_json(
+                "https://open-api-v4.coinglass.com/api/futures/liquidation/aggregated-heatmap/model1?" + params,
+                headers={"CG-API-KEY": COINGLASS_API_KEY},
+                timeout=18
+            )
+            if str(raw.get("code")) != "0":
+                raise RuntimeError(str(raw.get("msg") or raw.get("code") or "CoinGlass returned an unsuccessful response"))
+            data = raw.get("data") or {}
+            y_axis = [_as_float(value) for value in (data.get("y_axis") or [])]
+            rows = []
+            totals = {}
+            for row in (data.get("liquidation_leverage_data") or [])[:30000]:
+                if not isinstance(row, (list, tuple)) or len(row) < 3:
+                    continue
+                try:
+                    x_index, y_index, intensity = int(row[0]), int(row[1]), float(row[2])
+                except (TypeError, ValueError):
+                    continue
+                if x_index < 0 or y_index < 0 or y_index >= len(y_axis) or y_axis[y_index] is None or intensity <= 0:
+                    continue
+                rows.append([x_index, y_index, intensity])
+                totals[y_index] = totals.get(y_index, 0.0) + intensity
+
+            max_intensity = max(totals.values()) if totals else 0.0
+            clusters = [{
+                "price": y_axis[index],
+                "intensity": round(value, 6),
+                "relative_intensity": round(value / max_intensity, 4) if max_intensity else 0.0
+            } for index, value in totals.items()]
+            clusters.sort(key=lambda item: item["intensity"], reverse=True)
+            result = {
+                "available": bool(rows and y_axis),
+                "source": "CoinGlass aggregated liquidation heatmap model1",
+                "symbol": base_symbol,
+                "range": range_name,
+                "y_axis": y_axis,
+                "liquidation_leverage_data": rows,
+                "price_candlesticks": (data.get("price_candlesticks") or [])[-600:],
+                "clusters": clusters[:80],
+                "updated_at": utc_now(),
+                "note": "تراکم لیکوییدیشن مدل برآوردی CoinGlass است؛ سطح لیکوییدیشن سفارش واقعیِ قابل مشاهده یا تضمین جهت حرکت قیمت نیست."
+            }
+            if not result["available"]:
+                result["note"] = "CoinGlass پاسخ داد اما داده کافی برای رسم نقشه وجود نداشت."
+            COINGLASS_CACHE[cache_key] = {"at": now, "data": result}
+            return result
+        except Exception as exc:
+            result = {
+                "available": False, "source": "CoinGlass",
+                "symbol": base_symbol, "range": range_name,
+                "note": "دریافت نقشه CoinGlass ناموفق بود؛ کلید، دسترسی پلن و پشتیبانی نماد را بررسی کن. " + str(exc)[:180]
+            }
+            COINGLASS_CACHE[cache_key] = {"at": now, "data": result}
+            return result
+
+
+def build_liquidation_context(result, heatmap, current_price):
+    if not heatmap or not heatmap.get("available") or current_price is None:
+        return {"available": False, "note": (heatmap or {}).get("note", "نقشه لیکوییدیشن در دسترس نیست.")}
+    clusters = heatmap.get("clusters") or []
+    above = [item for item in clusters if item.get("price") is not None and item["price"] > current_price]
+    below = [item for item in clusters if item.get("price") is not None and item["price"] < current_price]
+    nearest_above = min(above, key=lambda item: item["price"] - current_price) if above else None
+    nearest_below = min(below, key=lambda item: current_price - item["price"]) if below else None
+    atr = result.get("atr") or 0
+    adjustment = 0
+    reason = "نقشه به‌عنوان زمینه نقدینگی نمایش داده می‌شود و به‌تنهایی جهت معامله را تعیین نمی‌کند."
+    if atr > 0 and result.get("signal") in ("BUY", "SELL"):
+        if result["signal"] == "BUY" and nearest_above:
+            distance = nearest_above["price"] - current_price
+            opposing = nearest_below.get("intensity", 0) if nearest_below else 0
+            if distance <= atr * 3 and nearest_above.get("intensity", 0) >= opposing:
+                adjustment = 2
+                reason = "خوشه نقدینگی بالای قیمت با پلن خرید هم‌جهت است؛ فقط ۲ امتیاز تأییدی کم‌وزن اضافه شد."
+        elif result["signal"] == "SELL" and nearest_below:
+            distance = current_price - nearest_below["price"]
+            opposing = nearest_above.get("intensity", 0) if nearest_above else 0
+            if distance <= atr * 3 and nearest_below.get("intensity", 0) >= opposing:
+                adjustment = 2
+                reason = "خوشه نقدینگی زیر قیمت با پلن فروش هم‌جهت است؛ فقط ۲ امتیاز تأییدی کم‌وزن اضافه شد."
+
+    if adjustment:
+        if result.get("signal") == "BUY":
+            result["bull_score"] = min(100, int(result.get("bull_score", 0)) + adjustment)
+        elif result.get("signal") == "SELL":
+            result["bear_score"] = min(100, int(result.get("bear_score", 0)) + adjustment)
+        result["setup_score"] = max(int(result.get("bull_score", 0)), int(result.get("bear_score", 0)))
+        if isinstance(result.get("analysis"), list):
+            result["analysis"].append(reason)
+
+    return {
+        "available": True,
+        "current_price": current_price,
+        "nearest_above": nearest_above,
+        "nearest_below": nearest_below,
+        "score_adjustment": adjustment,
+        "note": reason
+    }
+
+
+@app.get("/api/analyze")
 
 def news_query(asset):
     if asset == "gold":
@@ -1586,7 +1818,7 @@ async def ai_synthesis(request: Request):
         "بین داده زنده، داده با تأخیر، تقریب محاسباتی و داده ناموجود تفاوت بگذار. سود قطعی وعده نده. "
         "ساختار چندتایم‌فریمی را با وزن بیشتر به 4h/1d/1w بررسی کن؛ تعارض تایم‌فریم‌ها را پنهان نکن. "
         "ساختار بازار، BOS/CHOCH، sweep، FVG، حجم، VWAP، Volume Profile، ADX/ATR، RSI/MACD، "
-        "مشتقات کریپتو، دفتر سفارش snapshot، COT هفتگی، داده‌های اقتصاد کلان و همبستگی‌ها را جداگانه ارزیابی کن. "
+        "مشتقات کریپتو، نقشه لیکوییدیشن CoinGlass در صورت موجود بودن، دفتر سفارش snapshot، COT هفتگی، داده‌های اقتصاد کلان و همبستگی‌ها را جداگانه ارزیابی کن. "
         "COT هفتگی و داده‌های کلان با تأخیرند؛ دفتر سفارش فقط snapshot است؛ Volume Profile و SMC تقریبی‌اند. "
         "ورودی، حدضرر، اهداف، R/R و شرط ابطال را فقط وقتی داده کافی است ارائه کن؛ در غیر این صورت WAIT. "
         "خروجی فارسی و ساختاریافته باشد: خلاصه، عوامل صعودی، عوامل نزولی، تعارض‌ها، رژیم بازار، سناریوی اصلی، "
