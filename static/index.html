@@ -371,8 +371,11 @@ function renderOpportunityAsset(d){
  '<h4>بررسی چندتایم‌فریمی</h4><div class="small">'+Object.keys(tfNames).map(k=>tfNames[k]+": "+opSideText(align[k.toUpperCase()])).join(" | ")+'</div>'+
  '<h4>جمع‌بندی روند و موقعیت قیمت</h4>'+opLine("وضعیت روند",r.trend_summary)+opLine("جایگاه قیمت",r.market_location)+
  '<h4>محدوده‌های ورود احتمالی</h4>'+opLine("ورود خرید",r.long_entry_zone)+opLine("ورود فروش",r.short_entry_zone)+
- '<h4>اهداف ساختاری</h4>'+opLine("اهداف صعودی",(r.long_targets||[]).map(opPrice).join(" | ")||"سطح ساختاری کافی پیدا نشد")+
- opLine("اهداف نزولی",(r.short_targets||[]).map(opPrice).join(" | ")||"سطح ساختاری کافی پیدا نشد")+
+ '<h4>اهداف ساختاری و بازده احتمالی تا هر هدف</h4>'+opLine("اهداف صعودی",(r.long_targets||[]).map((v,i)=>opPrice(v)+" ("+((r.long_target_returns_percent||[])[i]??"—")+"%)").join(" | ")||"سطح ساختاری کافی پیدا نشد")+
+ opLine("اهداف نزولی",(r.short_targets||[]).map((v,i)=>opPrice(v)+" ("+((r.short_target_returns_percent||[])[i]??"—")+"%)").join(" | ")||"سطح ساختاری کافی پیدا نشد")+
+ opLine("حد ضرر خرید",opPrice(r.long_stop_loss))+
+ opLine("حد ضرر فروش",opPrice(r.short_stop_loss))+
+ opLine("قیمت مبنای محاسبه اهداف",opPrice(r.reference_price_for_targets))+
  '<h4>سناریوهای بازار</h4>'+opLine("سناریوی صعودی",r.bullish_scenario)+opLine("سناریوی نزولی",r.bearish_scenario)+
  opLine("ابطال تحلیل",r.invalidation_note)+opLine("شرط ورود",r.entry_guidance)+
  '<h4>ساختار و ابزارهای SMC</h4>'+opLine("BOS",a.bos)+opLine("CHOCH",a.choch)+opLine("Liquidity Sweep",a.liquidity_sweep)+opLine("FVG",a.fvg)+
