@@ -104,5 +104,34 @@ class GeminiRetryTests(unittest.TestCase):
         self.assertEqual(request.call_count, 2)
 
 
+    @patch("app.ai_brain.time.sleep")
+    @patch("app.ai_brain._gemini_request")
+    def test_rate_limit_429_honors_retry_after_and_retries_once(self, request, sleep):
+        from email.message import Message
+        headers = Message()
+        headers["Retry-After"] = "1"
+        limited = urllib.error.HTTPError(
+            "https://example.invalid", 429, "Too Many Requests", headers,
+            io.BytesIO(b'{"error":{"message":"Requests per minute limit reached","status":"RESOURCE_EXHAUSTED"}}')
+        )
+        request.side_effect = [limited, {"ok": True}]
+        self.assertEqual(_request_with_retry("gemini-3.8-flash", "key", b"body"), {"ok": True})
+        self.assertEqual(request.call_count, 2)
+        sleep.assert_called_once_with(1.0)
+
+    @patch("app.ai_brain.time.sleep")
+    @patch("app.ai_brain._gemini_request")
+    def test_daily_quota_429_is_not_retried(self, request, sleep):
+        quota = urllib.error.HTTPError(
+            "https://example.invalid", 429, "Too Many Requests", {},
+            io.BytesIO(b'{"error":{"message":"Daily limit reached","status":"RESOURCE_EXHAUSTED","details":[{"metadata":{"quotaMetric":"generate_content_free_tier_requests_per_day"}}]}}')
+        )
+        request.side_effect = [quota]
+        with self.assertRaisesRegex(RuntimeError, "سهمیه روزانه Gemini"):
+            _request_with_retry("gemini-3.8-flash", "key", b"body")
+        self.assertEqual(request.call_count, 1)
+        sleep.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

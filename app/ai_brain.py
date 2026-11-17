@@ -10,6 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import time
+import re
 
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
@@ -71,12 +72,60 @@ def _gemini_request(model, api_key, body):
         return json.loads(response.read().decode("utf-8"))
 
 
+def _http_error_body(exc):
+    raw = exc.read().decode("utf-8", "ignore")[:4000]
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        payload = {}
+    error = payload.get("error") if isinstance(payload, dict) else {}
+    error = error if isinstance(error, dict) else {}
+    message = str(error.get("message") or raw or exc.reason or "بدون توضیح")
+    status = str(error.get("status") or "")
+    details = error.get("details") or []
+    detail_text = json.dumps(details, ensure_ascii=False, default=str)
+    retry_after = exc.headers.get("Retry-After") if exc.headers else None
+    if not retry_after:
+        match = re.search(r'"retryDelay"\s*:\s*"([0-9.]+)s"', detail_text)
+        if match:
+            retry_after = match.group(1)
+    try:
+        retry_seconds = max(0.0, float(retry_after)) if retry_after is not None else None
+    except (TypeError, ValueError):
+        retry_seconds = None
+    quota_text = (message + " " + status + " " + detail_text).lower()
+    daily_quota = any(token in quota_text for token in (
+        "per_day", "per day", "daily", "requests_per_day",
+        "generate_content_free_tier_requests_per_day"
+    ))
+    return message[:1000], retry_seconds, daily_quota
+
+
 def _request_with_retry(model, api_key, body, attempts=2):
     """Retry temporary Gemini capacity/server failures and read timeouts."""
     for attempt in range(attempts):
         try:
             return _gemini_request(model, api_key, body)
         except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                detail, retry_seconds, daily_quota = _http_error_body(exc)
+                if daily_quota:
+                    raise RuntimeError(
+                        "سهمیه روزانه Gemini تمام شده یا برای این مدل در پلن رایگان مجاز نیست؛ "
+                        "تلاش مجدد خودکار انجام نشد تا درخواست بی‌فایده تکرار نشود. جزئیات: " + detail
+                    ) from exc
+                delay = retry_seconds if retry_seconds is not None else 2.0
+                if attempt < attempts - 1 and delay <= 12:
+                    time.sleep(max(0.5, delay))
+                    continue
+                wait_note = (
+                    "حدود " + str(round(delay)) + " ثانیه دیگر"
+                    if delay > 0 else "پس از کاهش تعداد درخواست‌ها"
+                )
+                raise RuntimeError(
+                    "محدودیت سرعت/تعداد درخواست Gemini فعال است؛ " + wait_note +
+                    " دوباره امتحان کن. درخواست تکراری بی‌دلیل ارسال نشد. جزئیات: " + detail
+                ) from exc
             if exc.code not in (408, 500, 502, 503, 504) or attempt >= attempts - 1:
                 raise
             retry_after = exc.headers.get("Retry-After") if exc.headers else None
@@ -130,7 +179,10 @@ def call_gemini(evidence):
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "ignore")[:500]
         if exc.code == 429:
-            raise RuntimeError("محدودیت سهمیه یا سرعت Gemini فعال است؛ کمی بعد دوباره تلاش کن. " + detail)
+            message, retry_seconds, daily_quota = _http_error_body(exc)
+            if daily_quota:
+                raise RuntimeError("سهمیه روزانه Gemini تمام شده یا برای این مدل در پلن رایگان مجاز نیست. " + message)
+            raise RuntimeError("محدودیت سرعت/تعداد درخواست Gemini فعال است؛ کمی بعد دوباره تلاش کن. " + message)
         if exc.code == 503:
             raise RuntimeError("سرور Gemini پس از چند تلاش هنوز شلوغ است (503)؛ این خطا به‌تنهایی به معنی تمام‌شدن سهمیه نیست. چند دقیقه بعد دوباره تلاش کن. " + detail)
         if exc.code in (500, 502, 504, 408):

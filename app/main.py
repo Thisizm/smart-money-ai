@@ -2888,6 +2888,8 @@ async def ai_synthesis(request: Request):
 
 
 AI_BRAIN_CACHE = {}
+AI_BRAIN_FAILURE_CACHE = {}
+AI_BRAIN_INFLIGHT = set()
 AI_BRAIN_CACHE_LOCK = threading.Lock()
 
 
@@ -2961,6 +2963,17 @@ async def ai_decision(request: Request):
             result = dict(cached["result"])
             result["cache_hit"] = True
             return result
+        failed_until = AI_BRAIN_FAILURE_CACHE.get(cache_key)
+        if failed_until and now < failed_until:
+            remaining = max(1, int(failed_until - now))
+            raise HTTPException(
+                429,
+                "درخواست قبلی Gemini به محدودیت خورد؛ برای جلوگیری از مصرف دوباره سهمیه، "
+                "این نماد موقتاً متوقف شده است. " + str(remaining) + " ثانیه دیگر دوباره امتحان کن."
+            )
+        if cache_key in AI_BRAIN_INFLIGHT:
+            raise HTTPException(409, "تحلیل همین نماد و تایم‌فریم در حال انجام است؛ درخواست را دوباره ارسال نکن.")
+        AI_BRAIN_INFLIGHT.add(cache_key)
 
     request_started = time.perf_counter()
 
@@ -3101,12 +3114,21 @@ async def ai_decision(request: Request):
             "note": "هوش مصنوعی تصمیم تحلیلی مستقل می‌دهد؛ کنترل‌های عددی، کیفیت قیمت و ریسک همچنان اجباری‌اند. این خروجی معامله آزمایشی یا واقعی ایجاد نمی‌کند."
         }
         with AI_BRAIN_CACHE_LOCK:
-            AI_BRAIN_CACHE[cache_key] = {"at": now, "result": response}
+            AI_BRAIN_CACHE[cache_key] = {"at": time.time(), "result": response}
+            AI_BRAIN_FAILURE_CACHE.pop(cache_key, None)
         return response
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(502, "تحلیل هوش مصنوعی انجام نشد: " + str(exc)[:240])
+        message = str(exc)
+        if "سهمیه روزانه Gemini" in message or "محدودیت سرعت/تعداد درخواست Gemini" in message:
+            with AI_BRAIN_CACHE_LOCK:
+                AI_BRAIN_FAILURE_CACHE[cache_key] = time.time() + 20
+            raise HTTPException(429, "تحلیل Gemini فعلاً به محدودیت خورده است: " + message[:600])
+        raise HTTPException(502, "تحلیل هوش مصنوعی انجام نشد: " + message[:240])
+    finally:
+        with AI_BRAIN_CACHE_LOCK:
+            AI_BRAIN_INFLIGHT.discard(cache_key)
 
 
 @app.post("/webhook")
