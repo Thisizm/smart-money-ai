@@ -279,10 +279,6 @@ def record_signal(result, entry_mode="smart"):
                 return {"recorded": False, "reason": "smart_entry_risk_gate_blocked"}
             if smart.get("preferred_side") != ("long" if side == "LONG" else "short"):
                 return {"recorded": False, "reason": "smart_entry_direction_mismatch"}
-            if not smart_plan.get("available") or smart_plan.get("status") in (
-                "INVALIDATED", "BLOCKED_BY_ECONOMIC_CALENDAR", "BLOCKED_BY_EXECUTION_QUALITY"
-            ):
-                return {"recorded": False, "reason": "smart_entry_not_available"}
             zone = smart_plan.get("zone") or {}
             if zone.get("low") is None or zone.get("high") is None:
                 raise ValueError("smart_entry_zone_required")
