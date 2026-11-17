@@ -196,37 +196,39 @@ def _detect_divergences(candles, rsi_values, lookback=120):
 
     found = []
     for pivots, kind in ((lows, "low"), (highs, "high")):
-        if len(pivots) < 2:
-            continue
-        previous, current = pivots[-2], pivots[-1]
-        gap = current["index"] - previous["index"]
-        if gap < 5 or gap > 60:
-            continue
-        if kind == "low":
-            if current["price"] < previous["price"] and current["rsi"] > previous["rsi"]:
-                label, direction = "regular_bullish", "bullish"
-            elif current["price"] > previous["price"] and current["rsi"] < previous["rsi"]:
-                label, direction = "hidden_bullish", "bullish"
-            else:
+        # Check every neighboring confirmed-pivot pair, not only the newest two.
+        # This keeps a recent valid divergence visible even if the latest pivot
+        # does not itself form a divergence.
+        for pair_index in range(1, len(pivots)):
+            previous, current = pivots[pair_index - 1], pivots[pair_index]
+            gap = current["index"] - previous["index"]
+            if gap < 5 or gap > 60:
                 continue
-        else:
-            if current["price"] > previous["price"] and current["rsi"] < previous["rsi"]:
-                label, direction = "regular_bearish", "bearish"
-            elif current["price"] < previous["price"] and current["rsi"] > previous["rsi"]:
-                label, direction = "hidden_bearish", "bearish"
+            if kind == "low":
+                if current["price"] < previous["price"] and current["rsi"] > previous["rsi"]:
+                    label, direction = "regular_bullish", "bullish"
+                elif current["price"] > previous["price"] and current["rsi"] < previous["rsi"]:
+                    label, direction = "hidden_bullish", "bullish"
+                else:
+                    continue
             else:
-                continue
-        found.append({
-            "type": label, "direction": direction, "pivot_kind": kind,
-            "time": int(candles[current["index"]]["time"]),
-            "previous_time": int(candles[previous["index"]]["time"]),
-            "price": round(current["price"], 10),
-            "rsi": round(current["rsi"], 2),
-            "previous_price": round(previous["price"], 10),
-            "previous_rsi": round(previous["rsi"], 2),
-            "confirmation_after_bars": 2,
-            "confirmed": True
-        })
+                if current["price"] > previous["price"] and current["rsi"] < previous["rsi"]:
+                    label, direction = "regular_bearish", "bearish"
+                elif current["price"] < previous["price"] and current["rsi"] > previous["rsi"]:
+                    label, direction = "hidden_bearish", "bearish"
+                else:
+                    continue
+            found.append({
+                "type": label, "direction": direction, "pivot_kind": kind,
+                "time": int(candles[current["index"]]["time"]),
+                "previous_time": int(candles[previous["index"]]["time"]),
+                "price": round(current["price"], 10),
+                "rsi": round(current["rsi"], 2),
+                "previous_price": round(previous["price"], 10),
+                "previous_rsi": round(previous["rsi"], 2),
+                "confirmation_after_bars": 2,
+                "confirmed": True
+            })
     return {"available": bool(found), "signals": found[-4:],
             "note": "واگرایی فقط روی پیوت تأییدشده با دو کندل بسته‌شده سمت راست محاسبه می‌شود؛ واگرایی به‌تنهایی سیگنال ورود نیست."}
 
