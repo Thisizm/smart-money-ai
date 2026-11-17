@@ -496,7 +496,7 @@ def get_live_quote(market, symbol):
     return result
 
 
-def get_candles(market, symbol, timeframe):
+def _fetch_candles_uncached(market, symbol, timeframe):
     if timeframe not in TIMEFRAMES:
         raise HTTPException(400, "تایم‌فریم نامعتبر است")
     tf = TIMEFRAMES[timeframe]
@@ -552,6 +552,46 @@ def get_candles(market, symbol, timeframe):
                 )
 
     raise HTTPException(400, "فقط کریپتو، طلا و نقره پشتیبانی می‌شوند")
+
+
+# Shared short-lived candle cache: the main analysis and six-timeframe analysis
+# often request the selected timeframe at the same moment. Reuse the same
+# provider response instead of downloading identical historical candles twice.
+CANDLE_CACHE = {}
+CANDLE_CACHE_LOCK = threading.Lock()
+CANDLE_FETCH_LOCKS = {}
+
+
+def get_candles(market, symbol, timeframe):
+    cache_key = (market, symbol, timeframe)
+    ttl = 12 if market == "crypto" else 30
+    now = time.time()
+    with CANDLE_CACHE_LOCK:
+        cached = CANDLE_CACHE.get(cache_key)
+        if cached and now - cached["at"] < ttl:
+            return [dict(candle) for candle in cached["data"]]
+        fetch_lock = CANDLE_FETCH_LOCKS.setdefault(cache_key, threading.Lock())
+
+    # Per-key locking also coalesces simultaneous requests from parallel
+    # analysis tasks; unrelated symbols/timeframes can still fetch concurrently.
+    with fetch_lock:
+        now = time.time()
+        with CANDLE_CACHE_LOCK:
+            cached = CANDLE_CACHE.get(cache_key)
+            if cached and now - cached["at"] < ttl:
+                return [dict(candle) for candle in cached["data"]]
+
+        candles = _fetch_candles_uncached(market, symbol, timeframe)
+        snapshot = [dict(candle) for candle in candles]
+        with CANDLE_CACHE_LOCK:
+            CANDLE_CACHE[cache_key] = {"at": time.time(), "data": snapshot}
+            # Bound memory for long-running instances without affecting active data.
+            if len(CANDLE_CACHE) > 1200:
+                oldest = sorted(CANDLE_CACHE, key=lambda key: CANDLE_CACHE[key]["at"])[:300]
+                for key in oldest:
+                    CANDLE_CACHE.pop(key, None)
+                    CANDLE_FETCH_LOCKS.pop(key, None)
+        return [dict(candle) for candle in snapshot]
 
 
 def ema(values, period):
