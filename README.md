@@ -12,7 +12,7 @@ A research dashboard for crypto, gold and silver. The application is a decision-
 - Macro context: FRED yields, real yields, inflation, jobs, broad trade-weighted USD, VIX, oil and credit spreads.
 - Precious-metals positioning: CFTC Disaggregated Futures-Only managed-money COT for gold and silver.
 - Cross-asset rolling correlations: BTC, ETH, gold and silver daily returns.
-- Research backtest: EMA 9/21 + Wilder RSI + ADX baseline, chronological 70/30 split, next-bar entry, fees/slippage and doubled-cost stress.
+- Research backtest: EMA 9/21 + Wilder RSI + ADX baseline, chronological 70/30 split, three walk-forward windows, Monte Carlo trade resampling, next-bar entry, fees/slippage and doubled-cost stress.
 - Conservative risk gates for extreme ATR, very weak trend without structure, and excessive stop distance.
 
 ## Data sources and limitations
