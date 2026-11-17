@@ -1329,12 +1329,33 @@ def get_crypto_derivatives(symbol):
         mid = (bid + ask) / 2.0
         spread_bps = ((ask - bid) / mid * 10000.0) if mid else None
 
+    # Binance aggregate trades expose aggressor-side information. This is a
+    # recent-sample delta proxy, not a full-session or institutional CVD feed.
+    agg_rows = values.get("agg_trades") or []
+    buy_quote = sell_quote = 0.0
+    agg_count = 0
+    for trade in agg_rows if isinstance(agg_rows, list) else []:
+        trade_price = safe_float(trade.get("p"))
+        trade_qty = safe_float(trade.get("q"))
+        if trade_price is None or trade_qty is None or trade_price <= 0 or trade_qty <= 0:
+            continue
+        notional = trade_price * trade_qty
+        if trade.get("m") is True:
+            sell_quote += notional
+        else:
+            buy_quote += notional
+        agg_count += 1
+    total_aggressor_quote = buy_quote + sell_quote
+    cvd_delta_percent = ((buy_quote - sell_quote) / total_aggressor_quote * 100.0) if total_aggressor_quote > 0 else None
+    cvd_quote_delta = buy_quote - sell_quote if total_aggressor_quote > 0 else None
     metric_status = {
         "funding": funding is not None,
-        "open_interest": safe_float(oi_data.get("openInterest")) is not None,
+        "open_interest": oi_value is not None,
+        "open_interest_change_5m": oi_change_pct_5m is not None,
         "long_short": bool(long_rows),
         "taker_ratio": bool(taker_rows),
         "spot_order_book": bool(bids and asks),
+        "recent_trade_delta_proxy": agg_count > 0,
     }
     result = {
         # A spot order-book response alone must not imply futures data is available.
@@ -1344,13 +1365,20 @@ def get_crypto_derivatives(symbol):
         "source": "Binance public USD-M futures metrics + separate spot order-book snapshot",
         "funding_rate": funding,
         "funding_rate_percent": funding * 100 if funding is not None else None,
-        "open_interest_contracts": safe_float(oi_data.get("openInterest")),
+        "open_interest_contracts": oi_value,
+        "open_interest_change_pct_5m": oi_change_pct_5m,
+        "cvd_buy_quote": buy_quote if agg_count else None,
+        "cvd_sell_quote": sell_quote if agg_count else None,
+        "cvd_quote_delta": cvd_quote_delta,
+        "cvd_delta_percent": cvd_delta_percent,
+        "cvd_trade_count": agg_count,
+        "cvd_source": "Binance Spot aggregate trades; last up to 500 aggregated trades",
         "long_short_account_ratio": safe_float(long_rows[-1].get("longShortRatio")) if long_rows else None,
         "taker_buy_sell_ratio": safe_float(taker_rows[-1].get("buySellRatio")) if taker_rows else None,
         "spot_orderbook_imbalance_top20": imbalance,
         "spot_spread_basis_points": spread_bps,
         "errors": errors,
-        "note": "فاندینگ و OI مشتقات عمومی‌اند؛ نسبت لانگ/شورت تعداد حساب‌هاست. دفتر سفارش فقط snapshot اسپات است، نه جریان سفارش تاریخی یا سفارش نهادی."
+        "note": "Funding و OI از Binance USD-M هستند؛ تغییر OI فقط پس از دو نمونه با فاصله حداقل ۵ دقیقه محاسبه می‌شود. دلتا از سمت تهاجمی آخرین حداکثر ۵۰۰ معامله تجمیعی اسپات تخمین زده شده و CVD کامل تایم‌فریم یا جریان نهادی نیست. دفتر سفارش فقط snapshot لحظه‌ای است."
     }
     DERIVATIVES_CACHE[symbol] = {"at": now, "data": result}
     return result
