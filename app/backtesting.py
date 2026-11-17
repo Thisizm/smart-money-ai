@@ -226,7 +226,7 @@ def run_research_backtest(candles, timeframe, signal_engine=None):
             "risk_per_trade_percent": 0.5,
             "fee_per_side_percent": fee_rate_to_percent(0.0004),
             "slippage_per_side_percent": fee_rate_to_percent(0.0002),
-            "reward_risk": 2.0,
+            "reward_risk": ("production trade_plan target levels" if signal_engine is not None else 2.0),
             "max_holding_bars": 50,
             "leverage": 1.0,
             "same_bar_stop_and_target": "stop loss assumed first",
