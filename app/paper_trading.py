@@ -266,27 +266,26 @@ def record_signal(result):
     side = "LONG" if result["signal"] == "BUY" else "SHORT"
     smart = result.get("smart_entry") or {}
     smart_plan = smart.get("long" if side == "LONG" else "short") or {}
-    base_plan = result.get("trade_plan") or {}
+    # Never create a paper trade from the broad signal entry as a fallback.
+    # The user must explicitly activate smart entry and the structural plan must exist.
+    if not smart_plan.get("available") or smart_plan.get("status") in (
+        "INVALIDATED", "BLOCKED_BY_ECONOMIC_CALENDAR", "BLOCKED_BY_EXECUTION_QUALITY"
+    ):
+        return {"recorded": False, "reason": "smart_entry_not_available"}
     try:
         live_price = float(quote["price"])
-        zone = smart_plan.get("zone") if smart_plan.get("available") else None
-        if zone and zone.get("low") is not None and zone.get("high") is not None:
-            entry_low, entry_high = sorted((float(zone["low"]), float(zone["high"])))
-            entry = float(smart_plan.get("entry_reference") or ((entry_low + entry_high) / 2))
-            stop = float(smart_plan["stop_loss"])
-            targets = [float(x) for x in smart_plan.get("targets", [])]
-            source = "SMART_ENTRY_STRUCTURAL_ZONE"
-        else:
-            entry = float(base_plan.get("entry") or result.get("entry_price"))
-            tolerance = max(abs(entry) * 0.0005, float(result.get("atr") or 0) * 0.05)
-            entry_low, entry_high = entry - tolerance, entry + tolerance
-            stop = float(base_plan["stop_loss"])
-            targets = [float(x) for x in base_plan.get("targets", [])]
-            source = "SIGNAL_ENTRY_LEVEL"
+        zone = smart_plan.get("zone") or {}
+        if zone.get("low") is None or zone.get("high") is None:
+            raise ValueError("smart_entry_zone_required")
+        entry_low, entry_high = sorted((float(zone["low"]), float(zone["high"])))
+        entry = float(smart_plan.get("entry_reference") or ((entry_low + entry_high) / 2))
+        stop = float(smart_plan["stop_loss"])
+        targets = [float(x) for x in smart_plan.get("targets", [])]
+        source = "SMART_ENTRY_STRUCTURAL_ZONE"
         if len(targets) < 2:
             raise ValueError("two_targets_required")
     except (TypeError, ValueError, KeyError):
-        return {"recorded": False, "reason": "no_valid_entry_zone_or_trade_levels"}
+        return {"recorded": False, "reason": "no_valid_smart_entry_zone_or_trade_levels"}
     risk = entry - stop if side == "LONG" else stop - entry
     if risk <= 0:
         return {"recorded": False, "reason": "invalid_structural_stop"}

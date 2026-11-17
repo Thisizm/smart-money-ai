@@ -1590,8 +1590,24 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             "shape": "circle",
             "text": "واگرایی " + ("صعودی" if bullish_div else "نزولی")
         })
-    result["paper_trade"] = record_signal(result)
+    result["paper_trade"] = {"recorded": False, "reason": "manual_activation_required"}
     return result
+
+
+@app.post("/api/paper-trading/open")
+def api_open_paper_trade(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str = "15m"):
+    """Create one simulated trade only after the user explicitly requests it."""
+    if timeframe not in TIMEFRAMES:
+        raise HTTPException(400, "تایم‌فریم نامعتبر است")
+    if market not in ("crypto", "gold", "silver"):
+        raise HTTPException(400, "بازار نامعتبر است")
+    # Recompute server-side so stale browser data cannot create a trade.
+    result = api_analyze(market=market, symbol=symbol, timeframe=timeframe)
+    trade = record_signal(result)
+    if not trade.get("recorded"):
+        reason = trade.get("reason") or "ثبت معامله انجام نشد"
+        raise HTTPException(409, "معامله آزمایشی ثبت نشد: " + str(reason))
+    return {"success": True, "paper_trade": trade, **list_paper_trades(150)}
 
 
 @app.get("/api/paper-trading")
@@ -2537,7 +2553,7 @@ def scanner(market: str = "all", timeframe: str = "15m", limit: int = 10):
                                    and quote_age <= (60 if m == "crypto" else 900))
                 result["execution_quality"] = {"blocked": not quote_fresh}
                 result["economic_event_risk"] = economic_event_risk(m)
-                result["paper_trade"] = record_signal(result)
+                # Scanner is analysis-only; paper trades require an explicit user action.
                 results.append({
                     "market": m, "symbol": s, "signal": result["signal"],
                     "setup_score": result["setup_score"], "price": result["price"],

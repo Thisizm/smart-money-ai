@@ -31,7 +31,16 @@ class PaperTradingTests(unittest.TestCase):
                            "targets": [103.0, 105.0, 107.0]},
             "risk_management": {"risk_gate_passed": True},
             "execution_quality": {"blocked": False},
-            "economic_event_risk": {"entry_blocked_by_calendar": False}
+            "economic_event_risk": {"entry_blocked_by_calendar": False},
+            "smart_entry": {
+                "preferred_side": "long", "risk_gate_passed": True,
+                "long": {
+                    "available": True, "status": "WAIT_FOR_PULLBACK_CONFIRMATION",
+                    "zone": {"low": 99.8, "high": 100.2},
+                    "entry_reference": 100.0, "stop_loss": 98.0,
+                    "targets": [103.0, 105.0, 107.0]
+                }
+            }
         }
 
     def test_valid_signal_is_recorded_once(self):
@@ -40,6 +49,22 @@ class PaperTradingTests(unittest.TestCase):
         self.assertTrue(first["recorded"])
         self.assertTrue(second["duplicate"])
         self.assertEqual(paper_trading.list_paper_trades()["stats"]["pending_entry"], 1)
+
+    def test_generic_signal_without_smart_entry_zone_is_not_recorded(self):
+        signal = self.sample_signal()
+        signal.pop("smart_entry")
+        result = paper_trading.record_signal(signal)
+        self.assertFalse(result["recorded"])
+        self.assertEqual(result["reason"], "smart_entry_not_available")
+        self.assertEqual(paper_trading.list_paper_trades()["stats"]["pending_entry"], 0)
+
+    def test_smart_entry_structural_zone_is_the_recorded_entry(self):
+        result = paper_trading.record_signal(self.sample_signal())
+        self.assertTrue(result["recorded"])
+        trade = paper_trading.list_paper_trades()["trades"][0]
+        self.assertEqual(trade["source"], "SMART_ENTRY_STRUCTURAL_ZONE")
+        self.assertAlmostEqual(trade["entry_low"], 99.8)
+        self.assertAlmostEqual(trade["entry_high"], 100.2)
 
     def test_stale_or_proxy_quote_is_not_recorded(self):
         signal = self.sample_signal()
