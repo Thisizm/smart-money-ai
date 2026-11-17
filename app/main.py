@@ -999,7 +999,7 @@ def macro():
                 errors.append(series_id + ": " + str(exc)[:100])
     indicators = [indicators_by_id[key] for key in FRED_SERIES if key in indicators_by_id]
     result = {
-        "available": bool(indicators), "source": "Federal Reserve Economic Data (FRED)",
+        "available": any(item.get("available") for item in indicators), "source": "Federal Reserve Economic Data (FRED)",
         "indicators": indicators, "errors": errors,
         "not_connected": ["ICE DXY exact index", "Gold ETF flows", "Silver ETF flows", "central-bank gold purchases"],
         "updated_at": utc_now(),
