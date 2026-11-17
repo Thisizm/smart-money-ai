@@ -64,6 +64,8 @@ DOMINANCE_CACHE = {"at": 0.0, "data": None}
 DOMINANCE_LOCK = threading.Lock()
 MARGINPAD_CACHE = {}
 MARGINPAD_LOCK = threading.Lock()
+ECONOMIC_CALENDAR_CACHE = {"at": 0.0, "data": None}
+MARGINPAD_SCREENER_CACHE = {"at": 0.0, "data": None}
 
 
 def utc_now():
@@ -984,7 +986,9 @@ def status():
             "liquidation_heatmap": "غیرفعال؛ خوشه‌های تخمینی از امتیازدهی و رابط حذف شدند",
             "global_news": "GDELT DOC 2.0",
             "macro_indicators": "FRED " + ("configured" if FRED_API_KEY else "key_required"),
-            "ai_synthesis": "OpenAI " + ("configured" if AI_API_KEY else "key_required"),
+            "ai_synthesis": ("OpenAI configured" if AI_API_KEY else "Gemini free-tier " + ("configured" if GEMINI_API_KEY else "GEMINI_API_KEY required")),
+            "economic_calendar": "XOOMAR public calendar API, keyless, cached 15 minutes",
+            "external_crypto_confirmation": "MarginPad public screener, keyless, cached 5 minutes; validation only, not a signal source",
             "cot_positions": "CFTC public weekly disaggregated futures-only reports",
             "cross_asset_correlations": "BTC/ETH/gold/silver daily returns",
             "research_backtesting": "chronological holdout with fee/slippage stress"
@@ -1099,6 +1103,11 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
         }
     result["liquidation_heatmap"] = {"available": False, "disabled": True, "note": "نقشه شلوغ قبلی حذف شد."}
     result["liquidation_context"] = {"available": False, "note": "برای جلوگیری از امتیازدهی به خوشه‌های تخمینی نامطمئن، از امتیاز سیگنال حذف شد."}
+    result["economic_event_risk"] = economic_event_risk(market)
+    if market == "crypto":
+        result["external_confirmation"] = get_marginpad_screener_confirmation(symbol)
+    else:
+        result["external_confirmation"] = {"available": False, "source": "MarginPad", "note": "اسکنر مشتقات MarginPad فقط برای کریپتو است."}
     chart_bars = completed_candles(candles, timeframe)[-220:]
     result["chart_candles"] = [{
         "time": int(c["time"] // 1000),
@@ -1861,6 +1870,95 @@ def api_cot(asset: str = "gold"):
         raise HTTPException(400, "COT فقط برای طلا و نقره در دسترس است")
     return cot_positions(asset)
 
+
+
+@app.get("/api/economic-calendar")
+def economic_calendar():
+    """Free US macro calendar sourced from agency schedules via XOOMAR."""
+    now = time.time()
+    cached = ECONOMIC_CALENDAR_CACHE.get("data")
+    if cached and now - ECONOMIC_CALENDAR_CACHE.get("at", 0) < 900:
+        result = dict(cached)
+        result["cache_age_seconds"] = int(now - ECONOMIC_CALENDAR_CACHE["at"])
+        return result
+    try:
+        data = fetch_json("https://xoomar.com/api/markets/calendar?importance=high", timeout=12)
+        rows = data.get("data", []) if isinstance(data, dict) else []
+        if not isinstance(rows, list):
+            raise RuntimeError("Calendar response has no data array")
+        now_dt = datetime.now(timezone.utc)
+        events = []
+        for row in rows:
+            if not isinstance(row, dict) or not row.get("scheduledAt"):
+                continue
+            try:
+                stamp = datetime.fromisoformat(str(row["scheduledAt"]).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            minutes = int((stamp - now_dt).total_seconds() / 60)
+            events.append({**row, "minutes_until": minutes, "is_upcoming": minutes >= 0})
+        events.sort(key=lambda x: x.get("scheduledAt", ""))
+        result = {"available": True, "source": "XOOMAR / official US agency schedules",
+            "events": events, "next_release_at": data.get("nextReleaseAt"),
+            "updated_at": data.get("updatedAt") or utc_now(),
+            "attribution": data.get("attribution") or "Data: XOOMAR",
+            "source_attribution": (data.get("meta") or {}).get("sourceAttribution"),
+            "note": "تقویم زمان‌بندی انتشار رسمی است؛ پیش‌بینی اجماع بازار ندارد. زمان‌ها UTC هستند."}
+        ECONOMIC_CALENDAR_CACHE.update({"at": now, "data": result})
+        return result
+    except Exception as exc:
+        if cached:
+            stale = dict(cached)
+            stale.update({"stale": True, "warning": str(exc)[:160]})
+            return stale
+        return {"available": False, "source": "XOOMAR", "events": [], "warning": str(exc)[:180]}
+
+
+def economic_event_risk(market):
+    calendar = economic_calendar()
+    if not calendar.get("available"):
+        return {"available": False, "note": "تقویم اقتصادی در دسترس نیست؛ فیلتر خبر اعمال نشد."}
+    now = datetime.now(timezone.utc)
+    upcoming = []
+    for event in calendar.get("events", []):
+        try:
+            stamp = datetime.fromisoformat(str(event.get("scheduledAt", "")).replace("Z", "+00:00"))
+            minutes = int((stamp - now).total_seconds() / 60)
+        except ValueError:
+            continue
+        if 0 <= minutes <= 24 * 60:
+            upcoming.append({"name": event.get("eventName"), "scheduled_at": event.get("scheduledAt"), "minutes_until": minutes, "importance": event.get("importance"), "source": event.get("source")})
+    next_event = min(upcoming, key=lambda x: x["minutes_until"]) if upcoming else None
+    blocked = bool(next_event and next_event["minutes_until"] <= 15)
+    return {"available": True, "source": calendar.get("source"), "next_high_event": next_event,
+        "high_events_next_24h": len(upcoming), "new_entry_caution": bool(next_event and next_event["minutes_until"] <= 60),
+        "entry_blocked_by_calendar": blocked,
+        "note": ("خبر مهم در ۱۵ دقیقه آینده؛ از ورود جدید تا عبور خبر و آرام‌شدن نوسان خودداری کن." if blocked else "خبر مهم در یک ساعت آینده؛ ریسک خبر را در اندازه موقعیت لحاظ کن." if next_event and next_event["minutes_until"] <= 60 else "در ۲۴ ساعت آینده خبر مهمی در تقویم این منبع پیدا نشد؛ این به معنی نبود همه رویدادهای بازار نیست.")}
+
+
+def get_marginpad_screener_confirmation(symbol):
+    """Independent, low-weight crypto screener cross-check; never changes our core score."""
+    now = time.time()
+    cached = MARGINPAD_SCREENER_CACHE.get("data")
+    if cached and now - MARGINPAD_SCREENER_CACHE.get("at", 0) < 300:
+        data = cached
+    else:
+        try:
+            raw = fetch_json("https://marginpad.io/api/v1/screener", timeout=12)
+            envelope = raw.get("data", raw) if isinstance(raw, dict) else {}
+            rows = envelope.get("rows", []) if isinstance(envelope, dict) else []
+            data = rows if isinstance(rows, list) else []
+            MARGINPAD_SCREENER_CACHE.update({"at": now, "data": data})
+        except Exception as exc:
+            return {"available": False, "source": "MarginPad screener", "note": "تأیید مستقل دریافت نشد: " + str(exc)[:120]}
+    base = str(symbol).upper().replace("USDT", "").replace("USD", "")
+    match = next((row for row in data if str(row.get("symbol", "")).upper().replace("USDT", "").replace("USD", "") == base), None)
+    if not match:
+        return {"available": False, "source": "MarginPad screener", "note": "این نماد در فهرست منتخب اسکنر MarginPad نبود؛ عدم حضور به معنی سیگنال منفی نیست."}
+    return {"available": True, "source": "MarginPad independent screener",
+        "score": match.get("score"), "verdict": match.get("verdict"),
+        "trend": match.get("trend"), "rsi": match.get("rsi"), "setup": match.get("setup"),
+        "note": "این خروجی مدل مستقل ارائه‌دهنده است؛ فقط تأیید جانبی است و در امتیاز اصلی یا ورود/خروج دخالت داده نمی‌شود."}
 
 @app.get("/api/market-context")
 def market_context(asset: str = "gold"):
