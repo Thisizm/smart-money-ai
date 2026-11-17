@@ -1,9 +1,9 @@
 import math
 import unittest
 
-from app.pro_analysis import advanced_analysis
+from app.pro_analysis import advanced_analysis, _rsi_wilder_series, _rsi_wilder
 from app.backtesting import run_research_backtest
-from app.main import analyze, pearson_correlation
+from app.main import analyze, pearson_correlation, build_liquidation_context, _build_dominance_payload
 
 
 def sample_candles(count=320):
@@ -36,6 +36,45 @@ class AdvancedAnalysisTests(unittest.TestCase):
         self.assertIn("liquidity_map", result)
         self.assertIn("risk_template", result)
         self.assertTrue(0 <= result["rsi_wilder_14"] <= 100)
+
+    def test_rsi_series_matches_latest_wilder_rsi(self):
+        closes = [100.0 + i * 0.2 + math.sin(i / 4.0) for i in range(80)]
+        series = _rsi_wilder_series(closes, 14)
+        self.assertEqual(len(series), len(closes))
+        self.assertAlmostEqual(series[-1], _rsi_wilder(closes, 14), places=2)
+
+    def test_market_cap_dominance_uses_market_share_fields(self):
+        result = _build_dominance_payload("CoinGecko", {
+            "data": {
+                "market_cap_percentage": {"btc": 55.0, "eth": 12.0, "usdt": 5.0},
+                "updated_at": 1_700_000_000,
+                "total_market_cap": {"usd": 2_000_000_000_000},
+                "total_volume": {"usd": 80_000_000_000}
+            }
+        })
+        self.assertEqual(result["btc"], 55.0)
+        self.assertEqual(result["eth"], 12.0)
+        self.assertEqual(result["usdt"], 5.0)
+        self.assertEqual(result["others_ex_btc_eth_usdt"], 28.0)
+        self.assertIn("market-cap", result["source"])
+
+    def test_coinglass_confluence_is_low_weight_and_directional(self):
+        result = {
+            "signal": "BUY", "atr": 100.0, "bull_score": 50,
+            "bear_score": 40, "setup_score": 50, "analysis": []
+        }
+        heatmap = {
+            "available": True,
+            "clusters": [
+                {"price": 1020.0, "intensity": 100.0, "relative_intensity": 1.0},
+                {"price": 950.0, "intensity": 50.0, "relative_intensity": 0.5}
+            ]
+        }
+        context = build_liquidation_context(result, heatmap, 1000.0)
+        self.assertTrue(context["available"])
+        self.assertEqual(context["score_adjustment"], 2)
+        self.assertEqual(result["bull_score"], 52)
+        self.assertEqual(result["setup_score"], 52)
 
     def test_backtest_returns_out_of_sample_report(self):
         result = run_research_backtest(sample_candles(), "1d")
