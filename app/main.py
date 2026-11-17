@@ -297,6 +297,34 @@ def get_live_quote(market, symbol):
                 errors.append("Twelve Data quote: " + str(exc)[:140])
 
         if result is None:
+            # Keyless indicative spot quote fallback; this supplies a quote only,
+            # not historical OHLC candles required by the technical-analysis engine.
+            try:
+                metal_code = {"gold": "XAU", "silver": "XAG"}[market]
+                data = fetch_json("https://api.gold-api.com/price/" + metal_code, timeout=10)
+                price = float(data.get("price"))
+                if price <= 0 or data.get("currency", "USD") != "USD":
+                    raise RuntimeError("Gold API returned an invalid USD spot quote")
+                stamp_text = data.get("updatedAt") or data.get("updated_at")
+                stamp = None
+                if stamp_text:
+                    stamp = datetime.fromisoformat(str(stamp_text).replace("Z", "+00:00"))
+                    if stamp.tzinfo is None:
+                        stamp = stamp.replace(tzinfo=timezone.utc)
+                    stamp = stamp.astimezone(timezone.utc)
+                source_timestamp = stamp.isoformat() if stamp else None
+                result = {
+                    "available": True, "price": price, "source": "Gold API Spot",
+                    "source_symbol": metal_code + "/USD",
+                    "source_timestamp": source_timestamp,
+                    "age_seconds": max(0, int(now - stamp.timestamp())) if stamp else None,
+                    "is_proxy": False,
+                    "note": "قیمت مرجع اسپات به دلار برای هر اونس تروا از Gold API؛ داده حدود هر ۳۰ ثانیه به‌روزرسانی می‌شود و لزوماً با فید کارگزاری TradingView یکسان نیست."
+                }
+            except Exception as exc:
+                errors.append("Gold API spot: " + str(exc)[:120])
+
+        if result is None:
             tickers = {"gold": ["XAUUSD=X"], "silver": ["XAGUSD=X"]}[market]
             if ALLOW_METAL_FUTURES_PROXY:
                 tickers += {"gold": ["GC=F"], "silver": ["SI=F"]}[market]
@@ -759,7 +787,7 @@ def status():
         "providers": {
             "crypto_prices": "Binance Spot live ticker + Binance closed OHLCV candles",
             "crypto_derivatives": "Binance public futures funding/OI/long-short + spot order-book snapshot",
-            "metals_prices": ("Twelve Data Quote + OHLCV; Yahoo spot fallback" if TWELVE_DATA_API_KEY else "Yahoo spot-only fallback; real-time access depends on provider plan"),
+            "metals_prices": ("Twelve Data Quote + OHLCV; Gold API spot quote fallback; Yahoo spot fallback" if TWELVE_DATA_API_KEY else "Gold API spot quote fallback; Twelve Data key required for metal OHLCV analysis; Yahoo spot fallback"),
             "metal_futures_proxy": "enabled" if ALLOW_METAL_FUTURES_PROXY else "disabled to avoid mixing futures with spot XAU/USD and XAG/USD",
             "crypto_dominance": "CoinGecko global endpoint with source timestamp" + ("; API key configured" if COINGECKO_API_KEY else "; public endpoint"),
             "global_news": "GDELT DOC 2.0",
