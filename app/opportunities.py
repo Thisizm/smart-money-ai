@@ -273,6 +273,16 @@ def opportunity_asset(symbol: str, market: str = "crypto"):
         external = core.get_marginpad_screener_confirmation(symbol)
     else:
         external = {"available": False, "note": "تأییدکننده بیرونی برای فلزات متصل نیست."}
+    try:
+        broad_context = core.market_context(market)
+    except Exception as exc:
+        broad_context = {"available": False, "error": str(exc)[:180]}
+    dominance_data = None
+    if market == "crypto":
+        try:
+            dominance_data = core.dominance()
+        except Exception as exc:
+            dominance_data = {"available": False, "error": str(exc)[:180]}
 
     side = "long" if daily.get("signal") == "BUY" else "short" if daily.get("signal") == "SELL" else None
     structural_long = _levels(candles_by_tf["1d"], "long", float(daily.get("price") or 0))
@@ -329,7 +339,12 @@ def opportunity_asset(symbol: str, market: str = "crypto"):
         "bearish_breakdown": short_scenario,
         "invalidation_note": "سناریوی خرید در صورت بسته‌شدن و تثبیت زیر حد ضرر/ابطال ساختاری پلن خرید نیازمند بازبینی است؛ سناریوی فروش با تثبیت بالای حد ابطال فروش. سطوح دقیق فقط در صورت وجود پلن معتبر نمایش داده می‌شوند.",
         "entry_guidance": "ورود فوری فقط وقتی بررسی می‌شود که قیمت زنده تازه باشد، در ناحیه معتبر قرار بگیرد و واکنش کندل بسته‌شده تأیید شود. لمس ساده محدوده، تریگر ورود نیست.",
-        "alignment_count": matching
+        "alignment_count": matching,
+        "news_summary": ((broad_context.get("news") or {}).get("articles") or [])[:8],
+        "macro_factors": broad_context.get("factors") or [],
+        "macro_data": broad_context.get("macro") or {},
+        "cot_data": broad_context.get("cot") or {},
+        "dominance": dominance_data
     }
     daily_chart = [{
         "time": int(c["time"] // 1000), "open": c["open"], "high": c["high"],
@@ -346,6 +361,17 @@ def opportunity_asset(symbol: str, market: str = "crypto"):
         "fvg": daily.get("fvg_zone"), "order_block": daily.get("order_block_approx"),
         "liquidity_sweep_level": daily.get("liquidity_sweep_level")
     }
+    marker_time = int(candles_by_tf["1d"][-1]["time"] // 1000)
+    daily_markers = []
+    if daily.get("signal") == "BUY":
+        daily_markers.append({"time": marker_time, "position": "belowBar", "color": "#28c997", "shape": "arrowUp", "text": "BUY"})
+    elif daily.get("signal") == "SELL":
+        daily_markers.append({"time": marker_time, "position": "aboveBar", "color": "#ff7182", "shape": "arrowDown", "text": "SELL"})
+    if daily.get("liquidity_sweep_time"):
+        daily_markers.append({"time": int(daily["liquidity_sweep_time"] // 1000),
+            "position": "aboveBar" if daily.get("liquidity_sweep") == "بالا" else "belowBar",
+            "color": "#e9b95e", "shape": "circle", "text": "Liquidity sweep"})
+    daily["chart_markers"] = daily_markers
     return {
         "market": market, "symbol": symbol, "price": live_price if live_price is not None else daily.get("price"),
         "quote": quote, "quote_fresh": quote_fresh, "quote_source": quote.get("source"),
