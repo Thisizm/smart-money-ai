@@ -30,7 +30,56 @@ def _database_path():
 
 
 DB_PATH = _database_path()
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 _LOCK = threading.RLock()
+
+
+class _PostgresCursor:
+    def __init__(self, cursor, lastrowid=None):
+        self._cursor = cursor
+        self.lastrowid = lastrowid
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
+class _PostgresConnection:
+    """Small adapter for the SQLite-style calls used by this module."""
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if exc_type is None:
+                self.connection.commit()
+            else:
+                self.connection.rollback()
+        finally:
+            self.connection.close()
+
+    def execute(self, sql, params=()):
+        from psycopg2.extras import RealDictCursor
+
+        statement = sql.strip()
+        returns_id = False
+        if statement.upper().startswith("INSERT OR IGNORE INTO PAPER_TRADES"):
+            statement = statement.replace("INSERT OR IGNORE", "INSERT", 1).rstrip().rstrip(";")
+            statement += " ON CONFLICT (fingerprint) DO NOTHING RETURNING id"
+            returns_id = True
+        elif statement.upper().startswith("INSERT INTO PAPER_TRADES"):
+            statement = statement.rstrip().rstrip(";") + " RETURNING id"
+            returns_id = True
+
+        cursor = self.connection.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(statement.replace("?", "%s"), params)
+        lastrowid = None
+        if returns_id and cursor.rowcount:
+            inserted = cursor.fetchone()
+            lastrowid = inserted["id"] if inserted else None
+        return _PostgresCursor(cursor, lastrowid)
 
 
 def _now():
