@@ -3,6 +3,7 @@ import unittest
 
 from app.pro_analysis import advanced_analysis
 from app.backtesting import run_research_backtest
+from app.main import analyze, pearson_correlation
 
 
 def sample_candles(count=320):
@@ -43,6 +44,16 @@ class AdvancedAnalysisTests(unittest.TestCase):
         self.assertIn("out_of_sample", result)
         self.assertIn("out_of_sample_2x_cost_stress", result)
         self.assertEqual(result["split"]["out_of_sample_percent"], 30)
+
+    def test_integrated_analysis_has_risk_gate(self):
+        result = analyze(sample_candles(), "crypto", "BTCUSDT", "1d")
+        self.assertIn(result["signal"], ("BUY", "SELL", "WAIT"))
+        self.assertIn("risk_gate_passed", result["risk_management"])
+        self.assertIn("advanced_analysis", result)
+
+    def test_pearson_correlation(self):
+        result = pearson_correlation([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], [2, 4, 6, 8, 10, 12, 14, 16, 18, 20])
+        self.assertAlmostEqual(result, 1.0, places=6)
 
 
 if __name__ == "__main__":
