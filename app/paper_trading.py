@@ -234,7 +234,7 @@ def _portfolio_risk_state():
         sign = 1.0 if r.get("side") == "LONG" else -1.0
         floating += sign * (quote - entry) * qty * remaining
     equity = max(100.0, base + realized_total + floating)
-    daily_pnl = daily_realized + floating
+    daily_pnl = daily_realized
     return {
         "equity": equity, "risk_percent": risk_pct, "risk_cash": equity * risk_pct / 100.0,
         "daily_pnl": daily_pnl, "daily_loss_limit_cash": equity * daily_limit_pct / 100.0,
