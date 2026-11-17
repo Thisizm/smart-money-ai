@@ -387,11 +387,12 @@ def get_live_quote(market, symbol):
     if market == "crypto":
         try:
             params = urllib.parse.urlencode({"symbol": symbol})
-            data = fetch_json("https://data-api.binance.vision/api/v3/ticker/24hr?" + params, timeout=8)
-            price = float(data["lastPrice"])
-            stamp_ms = int(data.get("closeTime") or int(now * 1000))
+            data = fetch_json("https://data-api.binance.vision/api/v3/ticker/price?" + params, timeout=8)
+            price = float(data["price"])
+            # This is the time our server observed the latest last-traded price.
+            stamp_ms = int(now * 1000)
             result = {
-                "available": True, "price": price, "source": "Binance Spot ticker",
+                "available": True, "price": price, "source": "Binance Spot last-price (polling)",
                 "source_symbol": symbol, "source_timestamp": datetime.fromtimestamp(stamp_ms / 1000, tz=timezone.utc).isoformat(),
                 "age_seconds": max(0, int(now - stamp_ms / 1000)), "is_proxy": False,
                 "note": "قیمت آخرین معامله اسپات Binance؛ با نماد یا صرافی دیگر TradingView ممکن است تفاوت داشته باشد."
