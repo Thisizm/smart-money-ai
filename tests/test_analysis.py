@@ -3,7 +3,7 @@ import unittest
 
 from app.pro_analysis import advanced_analysis, _rsi_wilder_series, _rsi_wilder
 from app.backtesting import run_research_backtest
-from app.main import analyze, pearson_correlation, build_liquidation_context, _build_dominance_payload
+from app.main import analyze, pearson_correlation, build_liquidation_context, _build_dominance_payload, normalize_marginpad_liquidation_data
 
 
 def sample_candles(count=320):
@@ -58,7 +58,7 @@ class AdvancedAnalysisTests(unittest.TestCase):
         self.assertEqual(result["others_ex_btc_eth_usdt"], 28.0)
         self.assertIn("market-cap", result["source"])
 
-    def test_coinglass_confluence_is_low_weight_and_directional(self):
+    def test_marginpad_confluence_is_low_weight_and_directional(self):
         result = {
             "signal": "BUY", "atr": 100.0, "bull_score": 50,
             "bear_score": 40, "setup_score": 50, "analysis": []
@@ -66,15 +66,42 @@ class AdvancedAnalysisTests(unittest.TestCase):
         heatmap = {
             "available": True,
             "clusters": [
-                {"price": 1020.0, "intensity": 100.0, "relative_intensity": 1.0},
-                {"price": 950.0, "intensity": 50.0, "relative_intensity": 0.5}
+                {"price": 1020.0, "side": "short", "est_notional": 100.0, "intensity": 100.0, "relative_intensity": 1.0},
+                {"price": 950.0, "side": "long", "est_notional": 50.0, "intensity": 50.0, "relative_intensity": 0.5}
             ]
         }
         context = build_liquidation_context(result, heatmap, 1000.0)
         self.assertTrue(context["available"])
-        self.assertEqual(context["score_adjustment"], 2)
-        self.assertEqual(result["bull_score"], 52)
-        self.assertEqual(result["setup_score"], 52)
+        self.assertEqual(context["score_adjustment"], 1)
+        self.assertEqual(result["bull_score"], 51)
+        self.assertEqual(result["setup_score"], 51)
+
+    def test_marginpad_keeps_model_clusters_separate_from_observed_events(self):
+        data = normalize_marginpad_liquidation_data(
+            {
+                "updatedAt": "2026-11-17T12:00:00Z",
+                "clusters": [
+                    {"price": "1020", "side": "short", "est_notional": "250000"},
+                    {"price": "950", "side": "long", "est_notional": "125000"}
+                ]
+            },
+            {
+                "events": [
+                    {"ts": 1794916800, "exchange": "Binance", "symbol": "BTCUSDT",
+                     "side": "short_liquidated", "price": "1010", "qty": "0.5", "notional": "505"},
+                    {"ts": 1794916810, "exchange": "Bybit", "symbol": "BTCUSDT",
+                     "side": "long_liquidated", "price": "990", "qty": "0.2", "notional": "198"}
+                ]
+            },
+            "BTCUSDT"
+        )
+        self.assertTrue(data["available"])
+        self.assertEqual(len(data["model_clusters"]), 2)
+        self.assertEqual(len(data["events"]), 2)
+        self.assertEqual(data["model_clusters"][0]["kind"], "model_estimate")
+        self.assertEqual(data["events"][0]["kind"], "observed_event")
+        self.assertEqual(data["event_summary"]["short_liquidated_count"], 1)
+        self.assertEqual(data["event_summary"]["long_liquidated_count"], 1)
 
     def test_backtest_returns_out_of_sample_report(self):
         result = run_research_backtest(sample_candles(), "1d")
