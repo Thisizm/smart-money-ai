@@ -74,8 +74,8 @@ function renderLiquidationHeatmap(data,currentPrice){
   if(!axis.length||!rows.length)return;
   const minP=Math.min(...axis),maxP=Math.max(...axis),span=maxP-minP;
   if(!Number.isFinite(span)||span<=0)return;
-  const maxX=Math.max(1,...rows.map(row=>Number(row[0])||0));
-  const maxV=Math.max(1,...rows.map(row=>Number(row[2])||0));
+  let maxX=1,maxV=1;
+  for(const row of rows){maxX=Math.max(maxX,Number(row[0])||0);maxV=Math.max(maxV,Number(row[2])||0)}
   const cellW=Math.max(1,width/(maxX+1)),cellH=Math.max(1,height/axis.length);
   const yFor=price=>height-(price-minP)/span*height;
   for(const row of rows){
@@ -193,12 +193,12 @@ function renderChart(d){
   [70,50,30].forEach((level,index)=>rsiSeries.createPriceLine({
    price:level,color:index===1?"#42516b":"#8b6e65",lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:String(level)
   }));
-  priceChart.timeScale().subscribeVisibleLogicalRangeChange(range=>{
-   if(range&&rsiChart){try{rsiChart.timeScale().setVisibleLogicalRange(range)}catch(e){}}
+  priceChart.timeScale().subscribeVisibleTimeRangeChange(range=>{
+   if(range&&rsiChart){try{rsiChart.timeScale().setVisibleRange(range)}catch(e){}}
   });
   priceChart.timeScale().fitContent();
-  const range=priceChart.timeScale().getVisibleLogicalRange();
-  if(range){try{rsiChart.timeScale().setVisibleLogicalRange(range)}catch(e){}}
+  const range=priceChart.timeScale().getVisibleRange();
+  if(range){try{rsiChart.timeScale().setVisibleRange(range)}catch(e){}}
   if(typeof ResizeObserver!=="undefined"){
    rsiResizeObserver=new ResizeObserver(()=>{if(rsiChart&&rsiEl.clientWidth>0)rsiChart.applyOptions({width:rsiEl.clientWidth})});
    rsiResizeObserver.observe(rsiEl);
