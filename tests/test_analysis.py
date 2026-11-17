@@ -143,7 +143,8 @@ class AdvancedAnalysisTests(unittest.TestCase):
                 self.assertEqual(len(plan["targets"]), 3)
                 self.assertIn(plan["status"], (
                     "CONFIRMED_ON_CLOSED_CANDLE", "WAIT_FOR_PULLBACK_CONFIRMATION",
-                    "WAIT_FOR_LIVE_PRICE_CONFIRMATION", "BLOCKED_BY_ECONOMIC_CALENDAR"
+                    "WAIT_FOR_LIVE_PRICE_CONFIRMATION", "BLOCKED_BY_ECONOMIC_CALENDAR",
+                    "BLOCKED_BY_EXECUTION_QUALITY"
                 ))
 
     def test_pearson_correlation(self):
