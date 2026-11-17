@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .pro_analysis import advanced_analysis
 from .backtesting import run_research_backtest
+from .paper_trading import init_paper_db, record_signal, monitor_open_trades, list_paper_trades
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(APP_DIR)
@@ -94,6 +95,7 @@ def init_db():
 
 
 init_db()
+init_paper_db()
 
 
 def fetch_json(url, headers=None, timeout=15):
@@ -1156,7 +1158,8 @@ def status():
             "external_crypto_confirmation": "MarginPad public screener, keyless, cached 5 minutes; validation only, not a signal source",
             "cot_positions": "CFTC public weekly disaggregated futures-only reports",
             "cross_asset_correlations": "BTC/ETH/gold/silver daily returns",
-            "research_backtesting": "chronological holdout with fee/slippage stress"
+            "research_backtesting": "chronological holdout with fee/slippage stress",
+            "paper_trading": "automatic simulated signal capture and live-quote monitoring; no exchange orders"
         },
         "live_trading": False,
         "supported_timeframes": list(TIMEFRAMES.keys())
@@ -1428,7 +1431,19 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             "position": "aboveBar" if result.get("liquidity_sweep") == "بالا" else "belowBar",
             "color": "#e9b95e", "shape": "circle", "text": "Liquidity sweep"
         })
+    result["paper_trade"] = record_signal(result)
     return result
+
+
+@app.get("/api/paper-trading")
+def api_paper_trading():
+    return list_paper_trades(150)
+
+
+@app.post("/api/paper-trading/monitor")
+def api_paper_trading_monitor():
+    check = monitor_open_trades(get_live_quote)
+    return {"monitor": check, **list_paper_trades(150)}
 
 
 @app.get("/api/quote")
@@ -2333,6 +2348,14 @@ def scanner(market: str = "all", timeframe: str = "15m", limit: int = 10):
             try:
                 result = analyze(future.result(), m, s, timeframe)
                 quote = get_live_quote(m, s)
+                result["live_quote"] = quote
+                quote_age = quote.get("age_seconds")
+                quote_fresh = bool(quote.get("available") and not quote.get("is_proxy")
+                                   and quote_age is not None
+                                   and quote_age <= (60 if m == "crypto" else 900))
+                result["execution_quality"] = {"blocked": not quote_fresh}
+                result["economic_event_risk"] = economic_event_risk(m)
+                result["paper_trade"] = record_signal(result)
                 results.append({
                     "market": m, "symbol": s, "signal": result["signal"],
                     "setup_score": result["setup_score"], "price": result["price"],
@@ -2457,3 +2480,20 @@ def alerts():
     with db() as con:
         rows = con.execute("SELECT * FROM alerts ORDER BY id DESC LIMIT 50").fetchall()
     return [dict(row) for row in rows]
+
+
+# Background monitor: continues tracking simulated positions while this Render
+# process is awake. It never submits live orders.
+def _paper_monitor_loop():
+    while True:
+        try:
+            monitor_open_trades(get_live_quote)
+        except Exception:
+            pass
+        time.sleep(max(5, int(os.getenv("PAPER_MONITOR_INTERVAL_SECONDS", "10"))))
+
+
+_paper_monitor_thread = threading.Thread(
+    target=_paper_monitor_loop, name="paper-trading-monitor", daemon=True
+)
+_paper_monitor_thread.start()
