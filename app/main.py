@@ -19,6 +19,7 @@ from .pro_analysis import advanced_analysis
 from .intelligence_engine import assess_hidden_intelligence, apply_intelligence_gate
 from .backtesting import run_research_backtest
 from .paper_trading import init_paper_db, record_signal, monitor_open_trades, list_paper_trades, close_paper_trade
+from .ai_brain import call_gemini, validate_decision
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(APP_DIR)
@@ -2668,6 +2669,154 @@ async def ai_synthesis(request: Request):
         return {"analysis": "\n".join(chunks), "model": model, "provider": "Google Gemini", "updated_at": utc_now(), "free_tier_note": "سهمیه رایگان و محدودیت‌های Google AI Studio اعمال می‌شود."}
     except Exception as exc:
         raise HTTPException(502, "درخواست هوش مصنوعی انجام نشد؛ کلید یا سهمیه سرویس را بررسی کن. " + str(exc)[:150])
+
+
+
+
+AI_BRAIN_CACHE = {}
+AI_BRAIN_CACHE_LOCK = threading.Lock()
+
+
+def _compact_ai_evidence(value, depth=0):
+    """Remove chart payloads and cap verbose evidence before sending to Gemini."""
+    if depth > 8:
+        return "[عمق داده محدود شد]"
+    if isinstance(value, dict):
+        omitted = {"chart_candles", "rsi_chart", "rsi_series", "chart_markers",
+                   "liquidation_leverage_data", "price_candlesticks", "y_axis"}
+        return {
+            str(key): _compact_ai_evidence(item, depth + 1)
+            for key, item in value.items()
+            if key not in omitted
+        }
+    if isinstance(value, list):
+        items = value[-30:] if len(value) > 30 else value
+        return [_compact_ai_evidence(item, depth + 1) for item in items]
+    if isinstance(value, str):
+        return value[:1200]
+    return value
+
+
+@app.post("/api/ai-decision")
+async def ai_decision(request: Request):
+    """Gemini is the primary independent analyst; existing engines provide evidence and safety checks."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(503, "برای موتور اصلی هوش مصنوعی، GEMINI_API_KEY رایگان را در Render ثبت کن.")
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(400, "بدنه درخواست JSON معتبر نیست")
+    market = str(payload.get("market", "crypto")).lower()
+    symbol = str(payload.get("symbol", "BTCUSDT")).upper()
+    timeframe = str(payload.get("timeframe", "15m"))
+    if market not in ("crypto", "gold", "silver") or timeframe not in TIMEFRAMES:
+        raise HTTPException(400, "بازار یا تایم‌فریم نامعتبر است")
+    if market == "crypto" and symbol not in get_binance_spot_symbols():
+        raise HTTPException(400, "نماد باید جفت فعال USDT در Binance Spot باشد")
+    if market in METALS and symbol != METALS[market]:
+        raise HTTPException(400, "نماد فلز نامعتبر است")
+
+    cache_key = (market, symbol, timeframe)
+    now = time.time()
+    with AI_BRAIN_CACHE_LOCK:
+        cached = AI_BRAIN_CACHE.get(cache_key)
+        if cached and now - cached["at"] < 60:
+            result = dict(cached["result"])
+            result["cache_hit"] = True
+            return result
+
+    try:
+        # The existing technical engine and data connectors are the evidence providers.
+        technical = api_analyze(market=market, symbol=symbol, timeframe=timeframe)
+        mtf = multi_timeframe(market=market, symbol=symbol)
+        try:
+            context = market_context(market)
+        except Exception as exc:
+            context = {"available": False, "error": str(exc)[:180]}
+        try:
+            cross_asset = correlations()
+        except Exception as exc:
+            cross_asset = {"available": False, "error": str(exc)[:180]}
+        try:
+            market_dominance = dominance() if market == "crypto" else {
+                "available": False, "note": "دامیننس فقط برای زمینه بازار کریپتو کاربرد دارد."
+            }
+        except Exception as exc:
+            market_dominance = {"available": False, "error": str(exc)[:180]}
+        try:
+            calendar = economic_calendar()
+        except Exception as exc:
+            calendar = {"available": False, "error": str(exc)[:180]}
+
+        evidence = _compact_ai_evidence({
+            "market": market, "symbol": symbol, "requested_timeframe": timeframe,
+            "selected_timeframe_analysis": technical,
+            "all_timeframes": mtf,
+            "macro_news_cot": context,
+            "crypto_dominance": market_dominance,
+            "cross_asset_correlations": cross_asset,
+            "economic_calendar": calendar,
+            "instructions": {
+                "price_source": technical.get("live_quote", {}).get("source"),
+                "price_timestamp": technical.get("live_quote", {}).get("source_timestamp"),
+                "execution_quality": technical.get("execution_quality"),
+                "live_trading_enabled": False
+            }
+        })
+        encoded = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), default=str)
+        # Preserve all top-level data groups while bounding request size for free-tier use.
+        if len(encoded) > 42000:
+            evidence["all_timeframes"] = [
+                {k: v for k, v in item.items() if k not in ("advanced_analysis", "smart_entry")}
+                for item in evidence.get("all_timeframes", {}).get("timeframes", [])
+            ]
+            encoded = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), default=str)
+        if len(encoded) > 52000:
+            raise RuntimeError("حجم داده‌های تحلیلی بیش از حد مجاز است؛ یک بار دیگر با تایم‌فریم کوتاه‌تر امتحان کن.")
+
+        ai_result = call_gemini(evidence)
+        ai_result = validate_decision(
+            ai_result,
+            live_quote=technical.get("live_quote"),
+            execution_quality=technical.get("execution_quality")
+        )
+        response = {
+            "market": market, "symbol": symbol, "timeframe": timeframe,
+            "analysis": ai_result,
+            "technical_comparison": {
+                "signal": technical.get("signal"),
+                "bias": technical.get("bias"),
+                "setup_score": technical.get("setup_score"),
+                "entry": (technical.get("trade_plan") or {}).get("entry"),
+                "stop_loss": (technical.get("trade_plan") or {}).get("stop_loss"),
+                "targets": (technical.get("trade_plan") or {}).get("targets", []),
+                "multi_timeframe_overall": mtf.get("overall"),
+                "multi_timeframe_alignment": mtf.get("alignment_percent")
+            },
+            "data_groups_used": {
+                "selected_timeframe_technical": True,
+                "six_timeframes": bool(mtf.get("timeframes")),
+                "macro_news_cot": bool(context.get("macro") or context.get("news") or context.get("cot")),
+                "crypto_dominance": bool(market_dominance.get("available")),
+                "cross_asset_correlations": bool(cross_asset.get("available")),
+                "economic_calendar": bool(calendar.get("available")),
+                "derivatives": bool((technical.get("derivatives") or {}).get("available")),
+                "external_screener": bool((technical.get("external_confirmation") or {}).get("available"))
+            },
+            "provider": ai_result.get("provider", "Google Gemini"),
+            "model": ai_result.get("model"),
+            "updated_at": utc_now(),
+            "free_tier_only": True,
+            "paper_trade_created": False,
+            "note": "هوش مصنوعی تصمیم تحلیلی مستقل می‌دهد؛ کنترل‌های عددی، کیفیت قیمت و ریسک همچنان اجباری‌اند. این خروجی معامله آزمایشی یا واقعی ایجاد نمی‌کند."
+        }
+        with AI_BRAIN_CACHE_LOCK:
+            AI_BRAIN_CACHE[cache_key] = {"at": now, "result": response}
+        return response
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, "تحلیل هوش مصنوعی انجام نشد: " + str(exc)[:240])
 
 
 @app.post("/webhook")
