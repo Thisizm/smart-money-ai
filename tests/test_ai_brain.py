@@ -74,15 +74,34 @@ class GeminiRetryTests(unittest.TestCase):
 
     @patch("app.ai_brain.time.sleep")
     @patch("app.ai_brain._gemini_request")
-    def test_503_stops_after_three_attempts(self, request, sleep):
+    def test_503_stops_after_two_attempts(self, request, sleep):
         unavailable = urllib.error.HTTPError(
             "https://example.invalid", 503, "Unavailable", {}, io.BytesIO(b"busy")
         )
-        request.side_effect = [unavailable, unavailable, unavailable]
+        request.side_effect = [unavailable, unavailable]
         with self.assertRaises(urllib.error.HTTPError):
             _request_with_retry("gemini-3.8-flash", "key", b"same-body")
-        self.assertEqual(request.call_count, 3)
-        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(sleep.call_count, 1)
+
+    @patch("app.ai_brain.time.sleep")
+    @patch("app.ai_brain._gemini_request")
+    def test_read_timeout_is_retried_once(self, request, sleep):
+        import socket
+        request.side_effect = [socket.timeout("read timed out"), {"ok": True}]
+        result = _request_with_retry("gemini-3.8-flash", "key", b"same-body")
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(request.call_count, 2)
+        sleep.assert_called_once()
+
+    @patch("app.ai_brain.time.sleep")
+    @patch("app.ai_brain._gemini_request")
+    def test_persistent_read_timeout_has_clear_message(self, request, sleep):
+        import socket
+        request.side_effect = [socket.timeout("read timed out"), socket.timeout("read timed out")]
+        with self.assertRaisesRegex(RuntimeError, "نشانه تمام‌شدن سهمیه رایگان نیست"):
+            _request_with_retry("gemini-3.8-flash", "key", b"same-body")
+        self.assertEqual(request.call_count, 2)
 
 
 if __name__ == "__main__":
