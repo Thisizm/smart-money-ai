@@ -49,10 +49,16 @@ function renderSmartEntry(d){
   el.innerHTML='<b>منتظر بمان</b><div class="small">فعلاً محدوده ورود معتبر پیدا نشد. بعداً دوباره تحلیل بگیر.</div>';return;
  }
  const ready=plan.status==="CONFIRMED_ON_CLOSED_CANDLE";
- el.innerHTML='<b>'+(ready?"شرط اولیه ورود تأیید شده":"منتظر اصلاح قیمت")+'</b>'+
-  '<div class="smart-summary">جهت: '+side+'<br>محدوده ورود: '+fmt(plan.zone.low)+' تا '+fmt(plan.zone.high)+
-  '<br>حد ضرر: '+fmt(plan.stop_loss)+'<br>هدف اول: '+fmt((plan.targets||[])[0])+'</div>'+
-  '<div class="small">این محدوده قطعی نیست؛ قبل از هر تصمیم قیمت زنده و ریسک را بررسی کن.</div>';
+ const invalid=plan.status==="INVALIDATED";
+ const stateTitle=invalid?"سناریو باطل شد":ready?"تریگر کندلی تأیید شد":"منتظر اصلاح و تأیید کندل";
+ const stateNote=invalid?"قیمت از حد ابطال ساختاری عبور کرده؛ ورود، حد ضرر و اهداف قبلی را نادیده بگیر و تحلیل تازه بگیر.":
+  ready?"قیمت ورود تریگر، بسته‌شدن کندل رد معتبر است؛ قبل از اقدام، قیمت زنده و فاصله از تریگر را بررسی کن.":
+  "صرف لمس ناحیه کافی نیست؛ تا بسته‌شدن کندل رد معتبر، ورود فعال نیست.";
+ el.innerHTML='<b>'+stateTitle+'</b>'+
+  '<div class="smart-summary">جهت: '+side+'<br>محدوده ناحیه: '+fmt(plan.zone.low)+' تا '+fmt(plan.zone.high)+
+  '<br>'+(ready?'قیمت تریگر: ':'ورود مرجع (غیرفعال): ')+fmt(plan.entry)+
+  '<br>حد ابطال ساختاری: '+fmt(plan.stop_loss)+'<br>هدف نقدینگی اول: '+fmt((plan.targets||[])[0])+'</div>'+
+  '<div class="small">'+stateNote+'</div>';
 }
 function renderChart(d){
  if(!d)return;
