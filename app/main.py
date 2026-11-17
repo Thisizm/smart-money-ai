@@ -26,7 +26,6 @@ TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
 ALLOW_METAL_FUTURES_PROXY = os.getenv("ALLOW_METAL_FUTURES_PROXY", "false").lower() in ("1", "true", "yes")
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "")
 COINMARKETCAP_API_KEY = os.getenv("COINMARKETCAP_API_KEY", "")
-COINGLASS_API_KEY = os.getenv("COINGLASS_API_KEY", "")
 FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 AI_API_KEY = os.getenv("AI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
 AI_MODEL = os.getenv("AI_MODEL", "gpt-6-luna")
@@ -62,8 +61,8 @@ BINANCE_SYMBOLS_CACHE = {"at": 0.0, "symbols": list(CRYPTO_DEFAULT)}
 BINANCE_SYMBOLS_LOCK = threading.Lock()
 DOMINANCE_CACHE = {"at": 0.0, "data": None}
 DOMINANCE_LOCK = threading.Lock()
-COINGLASS_CACHE = {}
-COINGLASS_LOCK = threading.Lock()
+MARGINPAD_CACHE = {}
+MARGINPAD_LOCK = threading.Lock()
 
 
 def utc_now():
@@ -981,7 +980,7 @@ def status():
             "metals_prices": "Twelve Data XAU/USD and XAG/USD spot when entitled; Yahoo Finance fallback, including COMEX SI=F futures proxy for silver",
             "metal_instrument_note": "Silver SI=F fallback is a COMEX continuous futures proxy, not XAG/USD spot; provider feeds can differ.",
             "crypto_dominance": "Market-cap dominance from CoinGecko" + ("; CoinMarketCap fallback key configured" if COINMARKETCAP_API_KEY else "; optional CoinMarketCap fallback key not set") + "; Binance Spot is used for exchange prices, not global dominance",
-            "liquidation_heatmap": "CoinGlass aggregated liquidation heatmap " + ("API key configured; Professional/Enterprise plan required" if COINGLASS_API_KEY else "COINGLASS_API_KEY required; Professional/Enterprise plan required"),
+            "liquidation_heatmap": "MarginPad keyless liquidation clusters (model estimates) + observed liquidation events; cached 45 seconds; no API key required",
             "global_news": "GDELT DOC 2.0",
             "macro_indicators": "FRED " + ("configured" if FRED_API_KEY else "key_required"),
             "ai_synthesis": "OpenAI " + ("configured" if AI_API_KEY else "key_required"),
@@ -1090,7 +1089,7 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     result["live_quote"] = get_live_quote(market, symbol)
     if market == "crypto":
         with ThreadPoolExecutor(max_workers=2) as pool:
-            heatmap_future = pool.submit(get_coinglass_liquidation_heatmap, symbol)
+            heatmap_future = pool.submit(get_marginpad_liquidation_heatmap, symbol)
             derivatives_future = pool.submit(get_crypto_derivatives, symbol)
             heatmap = heatmap_future.result()
             result["derivatives"] = derivatives_future.result()
@@ -1099,7 +1098,7 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             result, heatmap, (result["live_quote"].get("price") if result["live_quote"].get("available") else result.get("price"))
         )
     else:
-        result["liquidation_heatmap"] = {"available": False, "note": "نقشه لیکوییدیشن CoinGlass فقط برای بازار کریپتو فعال است."}
+        result["liquidation_heatmap"] = {"available": False, "source": "MarginPad", "note": "نقشه لیکوییدیشن MarginPad فقط برای بازار کریپتو فعال است."}
         result["liquidation_context"] = {"available": False, "note": "برای فلزات نقشه لیکوییدیشن کریپتو کاربرد ندارد."}
         result["derivatives"] = {
             "available": False,
@@ -1385,108 +1384,209 @@ def dominance():
     raise HTTPException(502, "داده دامیننس از منابع ارزش بازار دریافت نشد. " + " | ".join(errors))
 
 
-def get_coinglass_liquidation_heatmap(symbol, range_name="24h"):
-    if not COINGLASS_API_KEY:
-        return {
-            "available": False, "source": "CoinGlass",
-            "note": "برای نمایش نقشه لیکوییدیشن، COINGLASS_API_KEY را در Render تنظیم کن؛ endpoint نقشه تجمیعی به پلن Professional یا Enterprise نیاز دارد."
-        }
+def _normalize_liquidation_side(value):
+    side = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if "short" in side:
+        return "short"
+    if "long" in side:
+        return "long"
+    return "unknown"
 
+
+def _marginpad_data_object(raw):
+    if not isinstance(raw, dict):
+        return {}
+    nested = raw.get("data")
+    return nested if isinstance(nested, dict) else raw
+
+
+def _marginpad_timestamp(value):
+    if value is None:
+        return None
+    try:
+        if isinstance(value, (int, float)) or str(value).strip().replace(".", "", 1).isdigit():
+            stamp = float(value)
+            if stamp > 1e12:
+                stamp /= 1000.0
+            return datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat()
+        text = str(value).strip()
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat()
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def normalize_marginpad_liquidation_data(cluster_raw, event_raw, symbol):
+    """Keep modelled liquidation levels separate from observed forced-close events."""
+    cluster_data = _marginpad_data_object(cluster_raw)
+    event_data = _marginpad_data_object(event_raw)
+    raw_clusters = cluster_data.get("clusters") or []
+    raw_events = event_data.get("events") or []
+    parsed_clusters = []
+
+    for item in raw_clusters[:5000] if isinstance(raw_clusters, list) else []:
+        if not isinstance(item, dict):
+            continue
+        price = _as_float(item.get("price"))
+        if price is None or price <= 0:
+            continue
+        est_notional = _as_float(item.get("est_notional"))
+        side = _normalize_liquidation_side(item.get("side"))
+        parsed_clusters.append({
+            "price": price,
+            "side": side,
+            "est_notional": max(0.0, est_notional or 0.0),
+            "intensity": max(0.0, est_notional or 0.0),
+            "relative_intensity": 0.0,
+            "kind": "model_estimate"
+        })
+
+    max_notional = max((item["est_notional"] for item in parsed_clusters), default=0.0)
+    for item in parsed_clusters:
+        item["relative_intensity"] = round(item["est_notional"] / max_notional, 4) if max_notional else 0.0
+    parsed_clusters.sort(key=lambda item: item["est_notional"], reverse=True)
+
+    parsed_events = []
+    for item in raw_events[:400] if isinstance(raw_events, list) else []:
+        if not isinstance(item, dict):
+            continue
+        price = _as_float(item.get("price"))
+        if price is None or price <= 0:
+            continue
+        qty = _as_float(item.get("qty"))
+        notional = _as_float(item.get("notional"))
+        if notional is None and qty is not None:
+            notional = abs(qty * price)
+        raw_side = str(item.get("side") or "").strip().lower()
+        side_class = _normalize_liquidation_side(raw_side)
+        parsed_events.append({
+            "ts": item.get("ts"),
+            "timestamp": _marginpad_timestamp(item.get("ts")),
+            "exchange": str(item.get("exchange") or "نامشخص")[:40],
+            "symbol": str(item.get("symbol") or symbol)[:30],
+            "side": raw_side or "unknown",
+            "side_class": side_class,
+            "price": price,
+            "qty": qty,
+            "notional": max(0.0, notional or 0.0),
+            "kind": "observed_event"
+        })
+
+    long_events = [item for item in parsed_events if item["side_class"] == "long"]
+    short_events = [item for item in parsed_events if item["side_class"] == "short"]
+    long_notional = sum(item["notional"] for item in long_events)
+    short_notional = sum(item["notional"] for item in short_events)
+    updated_at = _marginpad_timestamp(
+        cluster_data.get("updatedAt") or cluster_data.get("updated_at")
+        or event_data.get("updatedAt") or event_data.get("updated_at")
+    )
+    if not updated_at and parsed_events:
+        updated_at = parsed_events[-1].get("timestamp")
+    return {
+        "available": bool(parsed_clusters or parsed_events),
+        "source": "MarginPad liquidation collector",
+        "symbol": str(symbol).upper().replace("USDT", "").replace("USD", ""),
+        "range": "Live",
+        "clusters": parsed_clusters[:100],
+        "model_clusters": parsed_clusters[:100],
+        "events": parsed_events,
+        "event_count": len(parsed_events),
+        "event_summary": {
+            "long_liquidated_count": len(long_events),
+            "short_liquidated_count": len(short_events),
+            "long_liquidated_notional": round(long_notional, 2),
+            "short_liquidated_notional": round(short_notional, 2)
+        },
+        "updated_at": updated_at or utc_now(),
+        "note": (
+            "خوشه‌های قیمتی، برآورد مدل MarginPad هستند و قیمت دقیق لیکوییدیشن افراد نیستند. "
+            "نقاط رویدادها، لیکوییدیشن‌های واقعیِ گزارش‌شده از فید صرافی‌ها هستند؛ پوشش همه بازار تضمین‌شده نیست."
+        )
+    }
+
+
+def get_marginpad_liquidation_heatmap(symbol):
     base_symbol = str(symbol).upper().replace("USDT", "").replace("USD", "")
     if not base_symbol or not base_symbol.isalnum():
-        return {"available": False, "source": "CoinGlass", "note": "نماد برای CoinGlass معتبر نیست."}
-    if range_name not in ("12h", "24h", "3d", "7d", "30d", "90d", "180d", "1y"):
-        range_name = "24h"
+        return {"available": False, "source": "MarginPad", "note": "نماد برای MarginPad معتبر نیست."}
 
-    cache_key = base_symbol + ":" + range_name
     now = time.time()
-    with COINGLASS_LOCK:
-        cached = COINGLASS_CACHE.get(cache_key)
-        if cached and now - cached["at"] < 60:
-            return cached["data"]
-
-        try:
-            params = urllib.parse.urlencode({"symbol": base_symbol, "range": range_name})
-            raw = fetch_json(
-                "https://open-api-v4.coinglass.com/api/futures/liquidation/aggregated-heatmap/model1?" + params,
-                headers={"CG-API-KEY": COINGLASS_API_KEY},
-                timeout=18
-            )
-            if str(raw.get("code")) != "0":
-                raise RuntimeError(str(raw.get("msg") or raw.get("code") or "CoinGlass returned an unsuccessful response"))
-            data = raw.get("data") or {}
-            y_axis = [_as_float(value) for value in (data.get("y_axis") or [])]
-            rows = []
-            totals = {}
-            for row in (data.get("liquidation_leverage_data") or [])[:10000]:
-                if not isinstance(row, (list, tuple)) or len(row) < 3:
-                    continue
-                try:
-                    x_index, y_index, intensity = int(row[0]), int(row[1]), float(row[2])
-                except (TypeError, ValueError):
-                    continue
-                if x_index < 0 or y_index < 0 or y_index >= len(y_axis) or y_axis[y_index] is None or intensity <= 0:
-                    continue
-                rows.append([x_index, y_index, intensity])
-                totals[y_index] = totals.get(y_index, 0.0) + intensity
-
-            max_intensity = max(totals.values()) if totals else 0.0
-            clusters = [{
-                "price": y_axis[index],
-                "intensity": round(value, 6),
-                "relative_intensity": round(value / max_intensity, 4) if max_intensity else 0.0
-            } for index, value in totals.items()]
-            clusters.sort(key=lambda item: item["intensity"], reverse=True)
-            result = {
-                "available": bool(rows and y_axis),
-                "source": "CoinGlass aggregated liquidation heatmap model1",
-                "symbol": base_symbol,
-                "range": range_name,
-                "y_axis": y_axis,
-                "liquidation_leverage_data": rows,
-                "price_candlesticks": (data.get("price_candlesticks") or [])[-600:],
-                "clusters": clusters[:80],
-                "updated_at": utc_now(),
-                "note": "تراکم لیکوییدیشن مدل برآوردی CoinGlass است؛ سطح لیکوییدیشن سفارش واقعیِ قابل مشاهده یا تضمین جهت حرکت قیمت نیست."
-            }
-            if not result["available"]:
-                result["note"] = "CoinGlass پاسخ داد اما داده کافی برای رسم نقشه وجود نداشت."
-            COINGLASS_CACHE[cache_key] = {"at": now, "data": result}
+    cache_key = base_symbol
+    with MARGINPAD_LOCK:
+        cached = MARGINPAD_CACHE.get(cache_key)
+        if cached and now - cached["at"] < 45:
+            result = dict(cached["data"])
+            result["cache_age_seconds"] = max(0, int(now - cached["at"]))
             return result
-        except Exception as exc:
-            result = {
-                "available": False, "source": "CoinGlass",
-                "symbol": base_symbol, "range": range_name,
-                "note": "دریافت نقشه CoinGlass ناموفق بود؛ کلید، دسترسی پلن و پشتیبانی نماد را بررسی کن. " + str(exc)[:180]
-            }
-            COINGLASS_CACHE[cache_key] = {"at": now, "data": result}
+
+        params = urllib.parse.urlencode({"symbol": base_symbol})
+        clusters_url = "https://marginpad.io/api/v1/clusters?" + params
+        events_url = "https://marginpad.io/api/v1/liquidations/live?" + urllib.parse.urlencode({
+            "symbol": base_symbol, "limit": 400
+        })
+        cluster_raw, event_raw = {}, {}
+        errors = []
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            cluster_future = pool.submit(fetch_json, clusters_url, None, 9)
+            event_future = pool.submit(fetch_json, events_url, None, 9)
+            try:
+                cluster_raw = cluster_future.result()
+            except Exception as exc:
+                errors.append("clusters: " + str(exc)[:120])
+            try:
+                event_raw = event_future.result()
+            except Exception as exc:
+                errors.append("events: " + str(exc)[:120])
+
+        result = normalize_marginpad_liquidation_data(cluster_raw, event_raw, base_symbol)
+        result["errors"] = errors
+        result["stale"] = False
+        if errors:
+            result["note"] += " یکی از دو endpoint موقتاً پاسخ نداد؛ داده موجود ممکن است ناقص باشد."
+        if result["available"]:
+            MARGINPAD_CACHE[cache_key] = {"at": now, "data": result}
             return result
+
+        if cached and now - cached["at"] < 900:
+            stale_result = dict(cached["data"])
+            stale_result["stale"] = True
+            stale_result["cache_age_seconds"] = max(0, int(now - cached["at"]))
+            stale_result["warning"] = "MarginPad موقتاً پاسخ نداد؛ آخرین داده معتبر به‌صورت قدیمی نمایش داده می‌شود."
+            stale_result["errors"] = errors
+            return stale_result
+
+        result["note"] += " داده‌ای از MarginPad دریافت نشد."
+        return result
 
 
 def build_liquidation_context(result, heatmap, current_price):
     if not heatmap or not heatmap.get("available") or current_price is None:
         return {"available": False, "note": (heatmap or {}).get("note", "نقشه لیکوییدیشن در دسترس نیست.")}
-    clusters = heatmap.get("clusters") or []
+    clusters = heatmap.get("model_clusters") or heatmap.get("clusters") or []
     above = [item for item in clusters if item.get("price") is not None and item["price"] > current_price]
     below = [item for item in clusters if item.get("price") is not None and item["price"] < current_price]
     nearest_above = min(above, key=lambda item: item["price"] - current_price) if above else None
     nearest_below = min(below, key=lambda item: current_price - item["price"]) if below else None
     atr = result.get("atr") or 0
     adjustment = 0
-    reason = "نقشه به‌عنوان زمینه نقدینگی نمایش داده می‌شود و به‌تنهایی جهت معامله را تعیین نمی‌کند."
+    reason = "خوشه‌ها برآورد مدل‌اند؛ رویدادهای واقعی جداگانه نمایش داده می‌شوند و این داده به‌تنهایی جهت معامله را تعیین نمی‌کند."
     if atr > 0 and result.get("signal") in ("BUY", "SELL"):
         if result["signal"] == "BUY" and nearest_above:
             distance = nearest_above["price"] - current_price
-            opposing = nearest_below.get("intensity", 0) if nearest_below else 0
-            if distance <= atr * 3 and nearest_above.get("intensity", 0) >= opposing:
-                adjustment = 2
-                reason = "خوشه نقدینگی بالای قیمت با پلن خرید هم‌جهت است؛ فقط ۲ امتیاز تأییدی کم‌وزن اضافه شد."
+            opposing = nearest_below.get("est_notional", nearest_below.get("intensity", 0)) if nearest_below else 0
+            strength = nearest_above.get("est_notional", nearest_above.get("intensity", 0))
+            if distance <= atr * 3 and nearest_above.get("side") == "short" and strength >= opposing:
+                adjustment = 1
+                reason = "خوشه تخمینی لیکوییدیشن شورت بالای قیمت با پلن خرید هم‌جهت است؛ فقط ۱ امتیاز تأییدی کم‌وزن اضافه شد."
         elif result["signal"] == "SELL" and nearest_below:
             distance = current_price - nearest_below["price"]
-            opposing = nearest_above.get("intensity", 0) if nearest_above else 0
-            if distance <= atr * 3 and nearest_below.get("intensity", 0) >= opposing:
-                adjustment = 2
-                reason = "خوشه نقدینگی زیر قیمت با پلن فروش هم‌جهت است؛ فقط ۲ امتیاز تأییدی کم‌وزن اضافه شد."
+            opposing = nearest_above.get("est_notional", nearest_above.get("intensity", 0)) if nearest_above else 0
+            strength = nearest_below.get("est_notional", nearest_below.get("intensity", 0))
+            if distance <= atr * 3 and nearest_below.get("side") == "long" and strength >= opposing:
+                adjustment = 1
+                reason = "خوشه تخمینی لیکوییدیشن لانگ زیر قیمت با پلن فروش هم‌جهت است؛ فقط ۱ امتیاز تأییدی کم‌وزن اضافه شد."
 
     if adjustment:
         if result.get("signal") == "BUY":
@@ -1506,6 +1606,8 @@ def build_liquidation_context(result, heatmap, current_price):
         "nearest_above": nearest_above,
         "nearest_below": nearest_below,
         "score_adjustment": adjustment,
+        "event_count": heatmap.get("event_count", 0),
+        "event_summary": heatmap.get("event_summary") or {},
         "note": reason
     }
 
