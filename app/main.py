@@ -115,6 +115,36 @@ def init_db():
 init_db()
 init_paper_db()
 
+# Keep simulated trades monitored while the web process is awake, even when
+# the browser is closed. Render may suspend free instances while idle.
+_paper_monitor_stop = threading.Event()
+_paper_monitor_thread = None
+
+
+def _paper_monitor_loop():
+    while not _paper_monitor_stop.wait(15):
+        try:
+            monitor_open_trades(get_live_quote)
+        except Exception:
+            # Monitoring must never take down the API process.
+            continue
+
+
+@app.on_event("startup")
+def start_paper_trade_monitor():
+    global _paper_monitor_thread
+    if _paper_monitor_thread is None or not _paper_monitor_thread.is_alive():
+        _paper_monitor_stop.clear()
+        _paper_monitor_thread = threading.Thread(
+            target=_paper_monitor_loop, name="paper-trade-monitor", daemon=True
+        )
+        _paper_monitor_thread.start()
+
+
+@app.on_event("shutdown")
+def stop_paper_trade_monitor():
+    _paper_monitor_stop.set()
+
 
 def fetch_json(url, headers=None, timeout=15):
     request_headers = {"User-Agent": "SmartMoneyAI/2.0"}
