@@ -920,12 +920,96 @@ def macro():
     return result
 
 
+COT_CACHE = {}
+
+
+def cot_positions(asset):
+    if asset not in ("gold", "silver"):
+        return {"available": False, "note": "COT برای این دارایی در این اتصال پشتیبانی نمی‌شود."}
+    cached = COT_CACHE.get(asset)
+    if cached and time.time() - cached["at"] < 21600:
+        return cached["data"]
+
+    commodity = "GOLD" if asset == "gold" else "SILVER"
+    params = urllib.parse.urlencode({
+        "$where": "commodity_name = '" + commodity + "'",
+        "$order": "report_date_as_yyyy_mm_dd DESC",
+        "$limit": 60
+    })
+    try:
+        rows = fetch_json("https://publicreporting.cftc.gov/resource/72hh-3qpy.json?" + params, timeout=20)
+        if not isinstance(rows, list) or not rows:
+            raise RuntimeError("CFTC returned no matching rows")
+
+        grouped = {}
+        for row in rows:
+            key = row.get("contract_market_name") or row.get("market_and_exchange_names") or commodity
+            grouped.setdefault(key, []).append(row)
+        contract, selected = max(grouped.items(), key=lambda item: len(item[1]))
+        selected.sort(key=lambda row: row.get("report_date_as_yyyy_mm_dd", ""), reverse=True)
+
+        parsed = []
+        for row in selected:
+            try:
+                long_pos = float(row.get("m_money_positions_long_all") or 0)
+                short_pos = float(row.get("m_money_positions_short_all") or 0)
+                open_interest = float(row.get("open_interest_all") or 0)
+                parsed.append({
+                    "date": row.get("report_date_as_yyyy_mm_dd"),
+                    "managed_money_long": long_pos,
+                    "managed_money_short": short_pos,
+                    "managed_money_net": long_pos - short_pos,
+                    "open_interest": open_interest,
+                    "net_percent_open_interest": ((long_pos - short_pos) / open_interest * 100) if open_interest else None
+                })
+            except (TypeError, ValueError):
+                continue
+        if not parsed:
+            raise RuntimeError("CFTC rows did not contain usable positioning fields")
+
+        current = parsed[0]
+        previous = parsed[1] if len(parsed) > 1 else None
+        nets = [item["managed_money_net"] for item in parsed]
+        low_net, high_net = min(nets), max(nets)
+        cot_index = ((current["managed_money_net"] - low_net) / (high_net - low_net) * 100) if high_net > low_net else 50.0
+        result = {
+            "available": True,
+            "source": "CFTC Disaggregated Futures Only",
+            "contract": contract,
+            "report_date": current["date"],
+            "managed_money_long": current["managed_money_long"],
+            "managed_money_short": current["managed_money_short"],
+            "managed_money_net": current["managed_money_net"],
+            "net_percent_open_interest": current["net_percent_open_interest"],
+            "weekly_net_change": current["managed_money_net"] - previous["managed_money_net"] if previous else None,
+            "cot_index_lookback": round(cot_index, 1),
+            "lookback_reports": len(parsed),
+            "note": "گزارش هفتگی است؛ موقعیت‌ها مربوط به سه‌شنبه و معمولاً جمعه منتشر می‌شوند. شاخص COT فقط نسبت به نمونه دریافت‌شده محاسبه شده و سیگنال کوتاه‌مدت نیست."
+        }
+    except Exception as exc:
+        result = {
+            "available": False, "source": "CFTC Disaggregated Futures Only",
+            "error": str(exc)[:180],
+            "note": "داده COT فعلاً دریافت نشد؛ این بخش در امتیاز تکنیکال دخالت داده نمی‌شود."
+        }
+    COT_CACHE[asset] = {"at": time.time(), "data": result}
+    return result
+
+
+@app.get("/api/cot")
+def api_cot(asset: str = "gold"):
+    if asset not in ("gold", "silver"):
+        raise HTTPException(400, "COT فقط برای طلا و نقره در دسترس است")
+    return cot_positions(asset)
+
+
 @app.get("/api/market-context")
 def market_context(asset: str = "gold"):
     if asset not in ("gold", "silver", "crypto"):
         raise HTTPException(400, "asset نامعتبر است")
     macro_data = macro()
     news_data = news(asset)
+    cot_data = cot_positions(asset) if asset in ("gold", "silver") else {"available": False, "note": "COT برای کریپتو در این بخش ارائه نمی‌شود."}
     factors = [
         {"factor": "دلار آمریکا", "status": "شاخص گسترده دلار FRED موجود است؛ جایگزین دقیق ICE DXY نیست" if any(x.get("series") == "DTWEXBGS" and x.get("available") for x in macro_data.get("indicators", [])) else "نیازمند منبع داده دلار", "impact": "دلار قوی می‌تواند بر فلزات و دارایی‌های ریسکی فشار وارد کند؛ رابطه قطعی نیست"},
         {"factor": "بازده واقعی اوراق", "status": "داده FRED موجود است" if any(x.get("series") == "DFII10" and x.get("available") for x in macro_data.get("indicators", [])) else "نیازمند FRED_API_KEY", "impact": "افزایش بازده واقعی معمولاً هزینه فرصت نگهداری طلا را بالا می‌برد"},
@@ -935,7 +1019,7 @@ def market_context(asset: str = "gold"):
     ]
     if asset == "silver":
         factors.append({"factor": "تقاضای صنعتی و معادن نقره", "status": "رصد تیترهای خبری فعال", "impact": "تقاضای صنعتی و اختلال عرضه می‌تواند بر توازن بازار اثر بگذارد"})
-    return {"asset": asset, "factors": factors, "macro": macro_data, "news": news_data, "updated_at": utc_now()}
+    return {"asset": asset, "factors": factors, "macro": macro_data, "news": news_data, "cot": cot_data, "updated_at": utc_now()}
 
 
 @app.get("/api/scanner")
