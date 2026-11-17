@@ -69,12 +69,16 @@ class HiddenIntelligenceTests(unittest.TestCase):
 
     def test_missing_data_is_reported_not_fabricated(self):
         result = self.aligned_analysis()
-        assessment = assess_hidden_intelligence("gold", result, {}, {}, {}, {})
+        assessment = assess_hidden_intelligence("crypto", result, {}, {}, {}, {})
         self.assertIn("دلتا معاملات/دفتر سفارش", assessment["missing_data"])
         self.assertIsNone(assessment["derivatives_snapshot"]["cvd_delta_percent"])
 
     def test_blocked_signal_has_no_trade_levels(self):
         result = self.aligned_analysis()
+        result["advanced_analysis"]["adx"]["regime"] = "ranging"
+        result["bos"] = "ندارد"
+        result["choch"] = "تأیید نشده"
+        result["liquidity_sweep"] = "ندارد"
         assessment = assess_hidden_intelligence("crypto", result, {})
         apply_intelligence_gate(result, assessment)
         if not assessment["gate_passed"]:
