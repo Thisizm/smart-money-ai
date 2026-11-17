@@ -1590,7 +1590,7 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             "shape": "circle",
             "text": "واگرایی " + ("صعودی" if bullish_div else "نزولی")
         })
-        result["paper_trade"] = record_signal(result)
+    result["paper_trade"] = record_signal(result)
     return result
 
 
