@@ -1015,7 +1015,7 @@ def dominance():
             "updated_at": utc_now(), "source_updated_at": source_updated_at,
             "source_age_seconds": max(0, int(time.time() - int(source_updated))) if source_updated else None,
             "source": "CoinGecko",
-            "note": "Others is calculated as the remaining share after BTC, ETH and USDT."
+            "note": "CoinGecko market_cap_percentage is not guaranteed to match TradingView CRYPTOCAP because provider coverage and circulating-supply methodology can differ. Others here is the residual after BTC, ETH and USDT, not necessarily TradingView OTHERS.D."
         }
     except Exception as exc:
         raise HTTPException(502, "داده دامیننس فعلاً در دسترس نیست؛ وضعیت API CoinGecko را بررسی کن. " + str(exc)[:120])
