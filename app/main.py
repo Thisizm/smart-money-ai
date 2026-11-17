@@ -2616,3 +2616,8 @@ _paper_monitor_thread = threading.Thread(
     target=_paper_monitor_loop, name="paper-trading-monitor", daemon=True
 )
 _paper_monitor_thread.start()
+
+
+# Dedicated high-selectivity opportunity scanner (analysis only; no trade creation).
+from .opportunities import router as opportunities_router
+app.include_router(opportunities_router)
