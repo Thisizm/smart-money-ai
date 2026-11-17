@@ -41,6 +41,8 @@ def init_paper_db():
             entry_low REAL,
             entry_high REAL,
             signal_entry REAL,
+            last_quote_price REAL,
+            last_quote_at TEXT,
             stop_loss REAL NOT NULL,
             target_1 REAL NOT NULL,
             target_2 REAL,
@@ -57,9 +59,11 @@ def init_paper_db():
         )
         """)
         columns = {row["name"] for row in con.execute("PRAGMA table_info(paper_trades)")}
-        for name in ("entry_low", "entry_high"):
+        for name in ("entry_low", "entry_high", "last_quote_price"):
             if name not in columns:
                 con.execute("ALTER TABLE paper_trades ADD COLUMN " + name + " REAL")
+        if "last_quote_at" not in columns:
+            con.execute("ALTER TABLE paper_trades ADD COLUMN last_quote_at TEXT")
         con.execute("CREATE INDEX IF NOT EXISTS idx_paper_status ON paper_trades(status)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_paper_created ON paper_trades(created_at DESC)")
 
@@ -122,9 +126,9 @@ def record_signal(result):
     with _LOCK, _connect() as con:
         cur = con.execute("""
             INSERT OR IGNORE INTO paper_trades
-            (fingerprint, created_at, updated_at, market, symbol, timeframe, side, signal_candle_time, entry_price, entry_low, entry_high, signal_entry, stop_loss, target_1, target_2, target_3, status, source, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (fingerprint, now, now, market, result.get("symbol", ""), result.get("timeframe", ""), side, candle_time, filled_entry, entry_low, entry_high, entry, stop, targets[0], targets[1], targets[2] if len(targets) > 2 else None, status, source, note))
+            (fingerprint, created_at, updated_at, market, symbol, timeframe, side, signal_candle_time, entry_price, entry_low, entry_high, signal_entry, last_quote_price, last_quote_at, stop_loss, target_1, target_2, target_3, status, source, note)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (fingerprint, now, now, market, result.get("symbol", ""), result.get("timeframe", ""), side, candle_time, filled_entry, entry_low, entry_high, entry, live_price, now, stop, targets[0], targets[1], targets[2] if len(targets) > 2 else None, status, source, note))
         if cur.rowcount == 0:
             row = con.execute("SELECT id, status FROM paper_trades WHERE fingerprint=?", (fingerprint,)).fetchone()
             return {"recorded": False, "duplicate": True, "trade_id": row["id"], "status": row["status"]}
@@ -146,6 +150,9 @@ def monitor_open_trades(quote_getter):
                 continue
             price = float(quote["price"])
             side = row["side"]
+            if row["status"] != "PENDING_ENTRY":
+                with _LOCK, _connect() as con:
+                    con.execute("UPDATE paper_trades SET last_quote_price=?, last_quote_at=? WHERE id=?", (price, _now(), row["id"]))
             if row["status"] == "PENDING_ENTRY":
                 low = float(row["entry_low"] if row["entry_low"] is not None else row["entry_price"])
                 high = float(row["entry_high"] if row["entry_high"] is not None else row["entry_price"])
@@ -156,10 +163,21 @@ def monitor_open_trades(quote_getter):
                         con.execute("UPDATE paper_trades SET status='INVALIDATED_BEFORE_ENTRY', updated_at=?, closed_at=?, exit_price=?, exit_reason='STOP_CROSSED_BEFORE_ENTRY' WHERE id=?", (_now(), _now(), price, row["id"]))
                     updated += 1
                     continue
-                if low <= price <= high:
-                    with _LOCK, _connect() as con:
-                        con.execute("UPDATE paper_trades SET status='ACTIVE', entry_price=?, updated_at=?, note=? WHERE id=?", (price, _now(), "قیمت وارد محدوده شد؛ معامله آزمایشی فعال شد.", row["id"]))
-                    updated += 1
+                previous_price = float(row["last_quote_price"]) if row["last_quote_price"] is not None else None
+                # Detect a directional crossing even when polling jumps over the zone.
+                if side == "LONG":
+                    crossed_zone = previous_price is not None and previous_price > high and price <= high and previous_price >= low
+                    fill_price = high if crossed_zone and price < low else price
+                else:
+                    crossed_zone = previous_price is not None and previous_price < low and price >= low and previous_price <= high
+                    fill_price = low if crossed_zone and price > high else price
+                touched = low <= price <= high or crossed_zone
+                with _LOCK, _connect() as con:
+                    if touched:
+                        con.execute("UPDATE paper_trades SET status='ACTIVE', entry_price=?, last_quote_price=?, last_quote_at=?, updated_at=?, note=? WHERE id=?", (fill_price, price, _now(), _now(), "قیمت محدوده ورود را لمس/قطع کرد؛ معامله آزمایشی فعال شد.", row["id"]))
+                        updated += 1
+                    else:
+                        con.execute("UPDATE paper_trades SET last_quote_price=?, last_quote_at=?, updated_at=? WHERE id=?", (price, _now(), _now(), row["id"]))
                 continue
             stop = float(row["stop_loss"])
             tp1 = float(row["target_1"])
