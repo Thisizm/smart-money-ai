@@ -277,6 +277,34 @@ def monitor_open_trades(quote_getter):
     return {"checked": len(rows), "updated": updated}
 
 
+def close_paper_trade(trade_id, exit_price=None):
+    """Manually close/cancel a paper trade at a supplied fresh quote; never places a real order."""
+    with _LOCK, _connect() as con:
+        row = con.execute("SELECT * FROM paper_trades WHERE id=?", (int(trade_id),)).fetchone()
+        if row is None:
+            return {"closed": False, "message": "معامله آزمایشی پیدا نشد"}
+        if row["status"] not in ("PENDING_ENTRY", "ACTIVE", "TP1_HIT"):
+            return {"closed": False, "message": "این معامله قبلاً بسته شده است"}
+        now = _now()
+        if row["status"] == "PENDING_ENTRY":
+            con.execute("UPDATE paper_trades SET status='MANUAL_CLOSED', updated_at=?, closed_at=?, exit_price=NULL, exit_reason='MANUAL_CANCEL_BEFORE_ENTRY' WHERE id=?", (now, now, int(trade_id)))
+            return {"closed": True, "trade_id": int(trade_id), "status": "MANUAL_CLOSED", "exit_price": None}
+        if exit_price is None or not math.isfinite(float(exit_price)) or float(exit_price) <= 0:
+            return {"closed": False, "message": "قیمت خروج معتبر نیست"}
+        entry = float(row["entry_price"])
+        stop = float(row["stop_loss"])
+        risk = entry - stop if row["side"] == "LONG" else stop - entry
+        if risk <= 0:
+            return {"closed": False, "message": "حد ضرر معامله معتبر نیست"}
+        exit_price = float(exit_price)
+        sign = 1.0 if row["side"] == "LONG" else -1.0
+        remaining = 0.5 if row["status"] == "TP1_HIT" else 1.0
+        realized_r = float(row["realized_r"] or 0.0) + remaining * sign * (exit_price - entry) / risk
+        realized_pct = float(row["realized_return_percent"] or 0.0) + remaining * sign * (exit_price - entry) / entry * 100.0
+        con.execute("UPDATE paper_trades SET status='MANUAL_CLOSED', updated_at=?, closed_at=?, exit_price=?, exit_reason='MANUAL_CLOSE', realized_r=?, realized_return_percent=?, last_quote_price=?, last_quote_at=? WHERE id=?", (now, now, exit_price, realized_r, realized_pct, exit_price, now, int(trade_id)))
+        return {"closed": True, "trade_id": int(trade_id), "status": "MANUAL_CLOSED", "exit_price": exit_price, "realized_r": round(realized_r, 4), "realized_return_percent": round(realized_pct, 4)}
+
+
 def list_paper_trades(limit=100):
     limit = max(1, min(int(limit), 300))
     with _LOCK, _connect() as con:
@@ -289,12 +317,13 @@ def list_paper_trades(limit=100):
                    SUM(CASE WHEN status IN ('TP1_HIT','TP2_HIT','SL_HIT','SL_AFTER_TP1') THEN 1 ELSE 0 END) AS tp1_touched,
                    SUM(CASE WHEN status='TP2_HIT' THEN 1 ELSE 0 END) AS tp2,
                    SUM(CASE WHEN status IN ('SL_HIT','SL_AFTER_TP1') THEN 1 ELSE 0 END) AS stopped,
-                   SUM(CASE WHEN status IN ('TP2_HIT','SL_HIT','SL_AFTER_TP1') THEN 1 ELSE 0 END) AS closed
+                   SUM(CASE WHEN status IN ('TP2_HIT','SL_HIT','SL_AFTER_TP1','MANUAL_CLOSED') THEN 1 ELSE 0 END) AS closed
             FROM paper_trades
         """).fetchone()
         closed_rows = con.execute("""
             SELECT realized_r FROM paper_trades
-            WHERE status IN ('TP2_HIT','SL_HIT','SL_AFTER_TP1')
+            WHERE status IN ('TP2_HIT','SL_HIT','SL_AFTER_TP1','MANUAL_CLOSED')
+              AND COALESCE(exit_reason, '') != 'MANUAL_CANCEL_BEFORE_ENTRY'
         """).fetchall()
     for row in rows:
         entry = float(row.get("entry_price") or 0)
@@ -321,7 +350,7 @@ def list_paper_trades(limit=100):
             "total": int(stats["total"] or 0), "active": int(stats["active"] or 0),
             "pending_entry": sum(1 for row in rows if row["status"] == "PENDING_ENTRY"),
             "tp1_touched": int(stats["tp1_touched"] or 0), "tp2": int(stats["tp2"] or 0),
-            "stopped": int(stats["stopped"] or 0), "closed": len(closed_r),
+            "stopped": int(stats["stopped"] or 0), "closed": int(stats["closed"] or 0),
             "win_rate_percent": round(wins / len(closed_r) * 100, 2) if closed_r else None,
             "net_r": round(sum(closed_r), 3),
             "open_pnl": open_pnl,

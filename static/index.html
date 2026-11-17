@@ -17,7 +17,7 @@
 <section id="context" hidden><div class="panel"><h3>اخبار و عوامل اثرگذار</h3><div class="row"><div class="field"><label>دارایی</label><select id="asset"><option value="gold">طلا</option><option value="silver">نقره</option><option value="crypto">کریپتو</option></select></div><button onclick="context()">دریافت اخبار و اقتصاد</button><button onclick="correlations()">همبستگی بازارها</button></div><div id="corrout"></div><div id="cstatus" class="muted"></div><h3>تقویم اقتصادی آمریکا</h3><div id="calendar" class="item">در حال دریافت تقویم…</div><div id="factors"></div><h3>موقعیت‌گیری هفتگی COT طلا/نقره</h3><div id="cot"></div><h3>تقویم اقتصادی</h3><div class="item">تقویم رسمی Forex Factory را باز کن؛ ساعت‌ها و درجه اهمیت خبرها را آنجا ببین. این سایت API رسمی عمومی مستند ندارد و استفاده خودکار از داده‌هایش محدودیت شرایط استفاده دارد، بنابراین در این نسخه داده‌اش را بدون مجوز اسکرپ نمی‌کنیم.<br><a href="https://www.forexfactory.com/calendar/" target="_blank" rel="noopener">باز کردن تقویم Forex Factory</a></div><h3>اخبار</h3><div id="news"></div><h3>شاخص‌های اقتصاد آمریکا</h3><div id="macro"></div></div></section>
 <section id="scanner" hidden><div class="panel"><h3>اسکنر بازار</h3><div class="row"><div class="field"><label>بازار</label><select id="sm"><option value="all">همه</option><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div><div class="field"><label>تایم‌فریم</label><select id="st"><option>15m</option><option>1h</option><option>4h</option><option>1d</option></select></div></div><button onclick="scanner()" style="margin-top:10px">شروع اسکن</button><div id="sstatus" class="muted"></div><div id="sresults"></div></div></section>
 <section id="ai" hidden><div class="panel"><h3>جمع‌بندی هوش مصنوعی</h3><p class="small">ابتدا تحلیل تکنیکال یا خبرها را دریافت کن. نیازمند AI_API_KEY در Render است و استفاده از API ممکن است هزینه داشته باشد.</p><button onclick="ai()">ساخت جمع‌بندی</button><div id="aistatus" class="muted"></div><pre id="aiout"></pre></div></section>
-<div class="panel"><b>وضعیت منابع</b><div id="providers" class="small">در حال بررسی…</div></div><div class="panel small">معامله خودکار خاموش است و سفارش واقعی ثبت نمی‌شود. کلیدهای API را فقط در Environment Variables در Render وارد کن، نه در چت یا کد عمومی. هیچ سیستم معاملاتی سود تضمینی ندارد.</div></main>
+<details class="panel" id="resources-panel"><summary style="cursor:pointer;font-weight:700">وضعیت منابع و اتصال‌ها — برای دیدن جزئیات بزن</summary><div id="providers" class="small" style="margin-top:12px">در حال بررسی…</div></details><div class="panel small">معامله خودکار خاموش است و سفارش واقعی ثبت نمی‌شود. کلیدهای API را فقط در Environment Variables در Render وارد کن، نه در چت یا کد عمومی. هیچ سیستم معاملاتی سود تضمینی ندارد.</div></main>
 <script>
 let coins=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","AVAXUSDT","LTCUSDT","TRXUSDT","DOTUSDT","BCHUSDT","NEARUSDT","UNIUSDT","SUIUSDT","TONUSDT","ETCUSDT","APTUSDT","ARBUSDT"];let lastA=null,lastC=null,lastCorr=null,currentAnalysisMarket=null,currentAnalysisSymbol=null,priceChart=null,rsiChart=null,smartEntryChart=null,chartResizeObserver=null,rsiResizeObserver=null,smartEntryResizeObserver=null,livePriceLine=null;
 document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll("main section").forEach(s=>s.hidden=true);document.getElementById(b.dataset.id).hidden=false;if(b.dataset.id==="dominance")dominance()});
@@ -44,14 +44,14 @@ function renderLiveQuote(q){
 function renderDivergences(d){
  const el=document.getElementById("divergence-panel");if(!el)return;
  const pack=((d.advanced_analysis||{}).divergences||{}),items=pack.signals||[];
- if(!items.length){el.textContent=pack.note||"واگرایی تأییدشده‌ای در پیوت‌های اخیر یافت نشد.";return}
+ if(!items.length){el.innerHTML="<b>واگرایی تأییدشده‌ای پیدا نشد.</b><br><span class='small'>برای نمایش واگرایی، باید دو نقطه برگشت قیمت شکل بگیرد و دو کندل بعدی هم بسته شوند. در این بازه شرط لازم پیدا نشد.</span><br><span class='small'>RSI فعلی: "+fmt((d.advanced_analysis||{}).rsi_wilder_14)+"</span>";return}
  const labels={regular_bullish:"واگرایی معمولی صعودی",hidden_bullish:"واگرایی مخفی صعودی",regular_bearish:"واگرایی معمولی نزولی",hidden_bearish:"واگرایی مخفی نزولی"};
  el.innerHTML=items.map(x=>'<div class="item"><b>'+((labels[x.type]||x.type))+'</b> | قیمت: '+fmt(x.price)+' | RSI: '+fmt(x.rsi)+'<br><span class="small">پیوت تأییدشده؛ '+new Date(x.time).toLocaleString("fa-IR")+' | پس از بسته‌شدن دو کندل تأیید شده است. این واگرایی به‌تنهایی مجوز ورود نیست.</span></div>').join("");
 }
 function renderScenario(d){
  const el=document.getElementById("scenario-analysis"),p=d.trade_plan||{},a=d.scenario_analysis||{};
  if(d.signal==="BUY"||d.signal==="SELL"){
-  el.textContent=(d.signal==="BUY"?"سیگنال خرید":"سیگنال فروش")+"؛ ورود مرجع: "+fmt(p.entry??d.entry_price)+" | حد ضرر: "+fmt(p.stop_loss??d.stop_loss)+" | هدف اول: "+fmt((p.targets||[])[0]??d.take_profit_1);
+  el.textContent=(d.signal==="BUY"?"سیگنال خرید":"سیگنال فروش")+"؛ قیمت پیشنهادی ورود: "+fmt(p.entry??d.entry_price)+" | حد ضرر: "+fmt(p.stop_loss??d.stop_loss)+" | هدف اول: "+fmt((p.targets||[])[0]??d.take_profit_1);
  }else{
   el.textContent="فعلاً سیگنال قطعی وجود ندارد. "+(a.location||"برای ورود منتظر تأیید بمان.");
  }
@@ -67,7 +67,7 @@ function renderSmartEntryChart(d,plan,side){
  const lines=[];
  const add=(value,color,title)=>{if(value==null||!Number.isFinite(Number(value)))return;cs.createPriceLine({price:Number(value),color,lineWidth:2,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title});lines.push('<span class="legend-chip" style="border-color:'+color+'">'+title+' '+fmt(Number(value))+'</span>')};
  add(plan.zone?.low,"#38bdf8","کف ناحیه");add(plan.zone?.high,"#38bdf8","سقف ناحیه");
- add(plan.entry,"#facc15",plan.status==="CONFIRMED_ON_CLOSED_CANDLE"?"تریگر":"ورود مرجع");
+ add(plan.entry,"#facc15",plan.status==="CONFIRMED_ON_CLOSED_CANDLE"?"قیمت فعال‌شدن":"قیمت پیشنهادی ورود");
  add(plan.stop_loss,"#fb7185","حد ضرر");
  (plan.targets||[]).forEach((x,i)=>add(x,"#4ade80","هدف "+(i+1)));
  const q=d.live_quote||{};if(q.available)add(q.price,"#7dd3fc","قیمت زنده");
@@ -93,8 +93,8 @@ function renderSmartEntry(d){
   "صرف لمس ناحیه کافی نیست؛ تا بسته‌شدن کندل رد معتبر، ورود فعال نیست.";
  el.innerHTML='<b>'+stateTitle+'</b>'+
   '<div class="smart-summary">جهت: '+side+'<br>محدوده ناحیه: '+fmt(plan.zone.low)+' تا '+fmt(plan.zone.high)+
-  '<br>'+(ready?'قیمت تریگر: ':'ورود مرجع (غیرفعال): ')+fmt(plan.entry)+
-  '<br>حد ابطال ساختاری: '+fmt(plan.stop_loss)+'<br>هدف نقدینگی اول: '+fmt((plan.targets||[])[0])+'</div>'+
+  '<br>'+(ready?'قیمت فعال‌شدن ورود: ':'قیمت پیشنهادی ورود (هنوز فعال نیست): ')+fmt(plan.entry)+
+  '<br>قیمت بی‌اعتبارشدن معامله: '+fmt(plan.stop_loss)+'<br>هدف نقدینگی اول: '+fmt((plan.targets||[])[0])+'</div>'+
   '<div class="small">'+stateNote+'</div>';
 }
 function renderChart(d){
@@ -222,6 +222,7 @@ async function refreshLiveQuote(){
 
 function showA(d){
  lastA=d;
+ renderDivergences(d);
  let e=document.getElementById("signal");
  e.textContent=d.signal+" — جهت بازار: "+d.bias;
  e.className=d.signal==="BUY"?"buy":d.signal==="SELL"?"sell":"wait";
@@ -284,7 +285,16 @@ async function correlations(){
 }
 async function scanner(){sstatus.textContent="در حال اسکن…";try{let d=await get("/api/scanner?market="+sm.value+"&timeframe="+st.value+"&limit=20");sresults.innerHTML=d.results.map(x=>'<div class="item"><b>'+x.symbol+"</b> — "+x.signal+" | جهت: "+(x.bias||"—")+" | امتیاز: "+(x.setup_score??"—")+"<br>"+(x.error||"قیمت زنده: "+(x.live_price==null?"ناموجود":fmt(x.live_price))+" | قیمت کندل تحلیل: "+fmt(x.analysis_price)+" | "+(x.quote_source||"منبع قیمت ناموجود")+" | سن: "+(x.quote_age_seconds==null?"—":x.quote_age_seconds+" ثانیه"))+"</div>").join("");sstatus.textContent="اسکن تمام شد؛ ۲۰ نماد منتخب از Binance Spot بررسی شدند. فهرست کامل جفت‌ها در بخش تحلیل قابل انتخاب است."}catch(e){sstatus.textContent="خطا: "+e.message}}
 async function ai(){aistatus.textContent="در حال پردازش…";if(!lastA&&!lastC){aistatus.textContent="اول تحلیل یا خبرها را دریافت کن";return}try{let mtfData=null;if(lastA&&!lastA.quote_only){try{mtfData=await get("/api/multi-timeframe?market="+market.value+"&symbol="+encodeURIComponent(symbol.value))}catch(e){}}let cal=null;try{cal=await get("/api/economic-calendar")}catch(e){}let d=await get("/api/ai-synthesis",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({technical:lastA,market_context:lastC,correlations:lastCorr,multi_timeframe:mtfData,economic_calendar:cal})});aiout.textContent=d.analysis;aistatus.textContent="آماده شد | "+(d.provider||d.model||"AI")}catch(e){aistatus.textContent="خطا: "+e.message}}
-function paperStatusLabel(x){return ({PENDING_ENTRY:"منتظر رسیدن قیمت به ورود",INVALIDATED_BEFORE_ENTRY:"ابطال قبل از ورود",ACTIVE:"معامله فعال",TP1_HIT:"هدف اول؛ نصف حجم بسته شد",TP2_HIT:"بسته شد؛ هدف دوم",SL_HIT:"حد ضرر",SL_AFTER_TP1:"هدف اول سپس حد ضرر"})[x]||x}
+function paperStatusLabel(x){return ({PENDING_ENTRY:"منتظر رسیدن قیمت به ورود",INVALIDATED_BEFORE_ENTRY:"ابطال قبل از ورود",ACTIVE:"معامله فعال",TP1_HIT:"هدف اول؛ نصف حجم بسته شد",TP2_HIT:"بسته شد؛ هدف دوم",SL_HIT:"حد ضرر",SL_AFTER_TP1:"هدف اول، بعد حد ضرر",MANUAL_CLOSED:"بسته‌شده دستی"})[x]||x}
+async function closePaperTrade(id){
+ if(!confirm("معامله آزمایشی با قیمت فعلی بسته شود؟ این کار سفارش واقعی ثبت نمی‌کند."))return;
+ try{
+  const response=await fetch("/api/paper-trading/"+encodeURIComponent(id)+"/close",{method:"POST"});
+  const data=await response.json();
+  if(!response.ok)throw new Error(data.detail||"بستن معامله انجام نشد");
+  await refreshPaperTrading();
+ }catch(e){alert("خطا: "+e.message)}
+}
 async function refreshPaperTrading(){
  const statusEl=document.getElementById("paper-status"),statsEl=document.getElementById("paper-stats"),listEl=document.getElementById("paper-list");
  if(!statusEl||!statsEl||!listEl)return;
@@ -295,9 +305,15 @@ async function refreshPaperTrading(){
   const x=d.stats||{};
   statsEl.innerHTML=metric("کل سیگنال‌های ثبت‌شده",x.total||0)+metric("در انتظار ورود",x.pending_entry||0)+metric("معاملات فعال",x.active||0)+metric("بسته‌شده",x.closed||0)+metric("نرخ برد معاملات بسته",x.win_rate_percent==null?"—":x.win_rate_percent+"%")+metric("مجموع نتیجه",((x.net_r||0)>0?"+":"")+(x.net_r??0)+"R")+metric("سود/ضرر شناور",((x.open_pnl||0)>0?"+":"")+fmt(x.open_pnl))+metric("سرمایه مجازی",fmt(x.virtual_balance_per_trade))+metric("برخورد به TP1",x.tp1_touched||0)+metric("برخورد به TP2",x.tp2||0)+metric("استاپ",x.stopped||0);
   const rows=d.trades||[];
-  listEl.innerHTML=rows.length?rows.map(t=>'<div class="item"><b>'+String(t.symbol||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))+'</b> | '+(t.market||"")+' | '+(t.timeframe||"")+' | '+(t.side==="LONG"?"خرید":"فروش")+'<br><b>'+paperStatusLabel(t.status)+'</b> | اهرم مجازی: '+fmt(t.leverage)+'x | حجم: '+fmt(t.quantity)+' | ارزش پوزیشن: '+fmt(t.notional)+'<br>مارجین درگیر: '+fmt(t.margin_used)+' از '+fmt(t.initial_balance)+' | ریسک اولیه: '+fmt(t.risk_cash)+'<br>ورود: '+(t.status==='PENDING_ENTRY'?'در انتظار':fmt(t.entry_price))+' | قیمت زنده: '+fmt(t.last_quote_price)+' | استاپ: '+fmt(t.stop_loss)+'<br>TP1: '+fmt(t.target_1)+' | TP2: '+fmt(t.target_2)+' | حجم باز: '+fmt((t.remaining_fraction||0)*100)+'%<br><b class="'+(t.total_pnl>=0?"buy":"sell")+'">سود/ضرر کل: '+(t.total_pnl>0?"+":"")+fmt(t.total_pnl)+' | شناور: '+(t.unrealized_pnl>0?"+":"")+fmt(t.unrealized_pnl)+' | بازده مارجین: '+fmt(t.return_on_margin_percent)+'%</b><br>نتیجه: '+(t.realized_r>0?"+":"")+(fmt(t.realized_r))+'R | '+(t.exit_reason||"در حال پیگیری")+'</div>').join(""):'<div class="item">هنوز سیگنال واجد شرایطی ثبت نشده است. فقط سیگنال‌های دارای قیمت زنده تازه و سطوح معتبر وارد تست می‌شوند.</div>';
+  listEl.innerHTML=rows.length?rows.map(t=>'<div class="item"><b>'+String(t.symbol||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))+'</b> | '+(t.market||"")+' | '+(t.timeframe||"")+' | '+(t.side==="LONG"?"خرید":"فروش")+'<br><b>'+paperStatusLabel(t.status)+'</b> | اهرم مجازی: '+fmt(t.leverage)+'x | حجم: '+fmt(t.quantity)+' | ارزش پوزیشن: '+fmt(t.notional)+'<br>مارجین درگیر: '+fmt(t.margin_used)+' از '+fmt(t.initial_balance)+' | ریسک اولیه: '+fmt(t.risk_cash)+'<br>ورود: '+(t.status==='PENDING_ENTRY'?'در انتظار':fmt(t.entry_price))+' | قیمت زنده: '+fmt(t.last_quote_price)+' | استاپ: '+fmt(t.stop_loss)+'<br>TP1: '+fmt(t.target_1)+' | TP2: '+fmt(t.target_2)+' | حجم باز: '+fmt((t.remaining_fraction||0)*100)+'%<br><b class="'+(t.total_pnl>=0?"buy":"sell")+'">سود/ضرر کل: '+(t.total_pnl>0?"+":"")+fmt(t.total_pnl)+' | شناور: '+(t.unrealized_pnl>0?"+":"")+fmt(t.unrealized_pnl)+' | بازده مارجین: '+fmt(t.return_on_margin_percent)+'%</b><br>نتیجه: '+(t.realized_r>0?"+":"")+(fmt(t.realized_r))+'R | '+(t.exit_reason||"در حال پیگیری")+(["PENDING_ENTRY","ACTIVE","TP1_HIT"].includes(t.status)?'<br><button onclick="closePaperTrade('+t.id+')">'+(t.status==="PENDING_ENTRY"?"لغو ورود آزمایشی":"بستن معامله آزمایشی")+'</button>':'')+'</div>').join(""):'<div class="item">هنوز سیگنال واجد شرایطی ثبت نشده است. فقط سیگنال‌های دارای قیمت زنده تازه و سطوح معتبر وارد تست می‌شوند.</div>';
   statusEl.textContent="حساب مجازی: 10,000 | ریسک هر معامله: 0.5% | اهرم خودکار: 1x تا 5x | آخرین بررسی: "+new Date().toLocaleTimeString("fa-IR")+" | سفارش واقعی: خاموش";
  }catch(e){statusEl.textContent="خطا در دریافت معاملات: "+e.message}
 }
-async function status(){try{let d=await get("/api/status");providers.textContent=Object.entries(d.providers).map(x=>x[0]+": "+x[1]).join(" | ")+" | معاملات واقعی: خاموش"}catch(e){providers.textContent="خطای اتصال: "+e.message}}symbols();loadOptions();status();refreshPaperTrading();setInterval(refreshPaperTrading,5000);setInterval(refreshLiveQuote,3000);setInterval(()=>{if(!document.getElementById("dominance").hidden)dominance()},60000);
+async function status(){
+ try{
+  const d=await get("/api/status");
+  const names={crypto_prices:"قیمت و کندل ارزها",crypto_derivatives:"اطلاعات معاملات اهرمی ارزها",metals_prices:"قیمت طلا و نقره",metal_instrument_note:"تفاوت قیمت اسپات و آتی",crypto_dominance:"دامیننس ارزها",liquidation_heatmap:"نقشه لیکوییدیشن",global_news:"خبرهای بازار",macro_indicators:"اطلاعات اقتصادی",ai_synthesis:"هوش مصنوعی",economic_calendar:"تقویم خبرهای اقتصادی",external_crypto_confirmation:"بررسی کمکی ارزها",cot_positions:"موقعیت معامله‌گران بزرگ",cross_asset_correlations:"رابطه بین بازارها",research_backtesting:"آزمایش روی داده‌های گذشته",paper_trading:"معاملات آزمایشی"};
+  providers.innerHTML=Object.entries(d.providers||{}).map(([key,value])=>'<div class="item"><b>'+(names[key]||key)+'</b><br>'+String(value)+'</div>').join("")+'<div class="item"><b>معاملات واقعی</b><br>خاموش؛ فقط معامله آزمایشی ثبت می‌شود.</div>';
+ }catch(e){providers.textContent="خطای اتصال: "+e.message}
+}symbols();loadOptions();status();refreshPaperTrading();setInterval(refreshPaperTrading,5000);setInterval(refreshLiveQuote,3000);setInterval(()=>{if(!document.getElementById("dominance").hidden)dominance()},60000);
 </script></body></html>
