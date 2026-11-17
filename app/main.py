@@ -1014,6 +1014,7 @@ def analyze(candles, market, symbol, timeframe):
         "market_structure": structure_trend,
         "price": price, "atr": atr, "entry_price": entry_price, "trade_plan": trade_plan,
         "conditional_scenarios": conditional_scenarios, "scenario_analysis": scenario_analysis,
+        "smart_entry": smart_entry,
         "chart_levels": {
             "support": range_low, "resistance": range_high,
             "long_trigger": bullish_trigger, "short_trigger": bearish_trigger,
