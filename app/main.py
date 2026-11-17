@@ -493,15 +493,52 @@ def analyze(candles, market, symbol, timeframe):
         choch = "تأیید نشده"
 
     order_block = None
+    search_start = max(0, len(candles) - 24)
     if bos_up or choch_up:
-        for candle in reversed(candles[-16:-1]):
-            if candle["close"] < candle["open"]:
-                order_block = {"type": "تقریبی صعودی", "low": candle["low"], "high": candle["high"]}
+        for idx in range(len(candles) - 2, search_start - 1, -1):
+            candidate = candles[idx]
+            if candidate["close"] >= candidate["open"]:
+                continue
+            impulse_index = None
+            for j in range(idx + 1, min(len(candles), idx + 6)):
+                impulse = candles[j]
+                body_size = abs(impulse["close"] - impulse["open"])
+                if impulse["close"] > impulse["open"] and impulse["close"] > candidate["high"] and body_size >= 0.8 * atr:
+                    impulse_index = j
+                    break
+            if impulse_index is not None:
+                mitigated = any(
+                    candles[j]["low"] <= candidate["high"] and candles[j]["high"] >= candidate["low"]
+                    for j in range(impulse_index + 1, len(candles))
+                )
+                order_block = {
+                    "type": "تقریبی صعودی", "low": candidate["low"], "high": candidate["high"],
+                    "origin_time": candidate["time"], "displacement_time": candles[impulse_index]["time"],
+                    "mitigated": mitigated, "validation": "opposite candle + bullish displacement close above zone"
+                }
                 break
     elif bos_down or choch_down:
-        for candle in reversed(candles[-16:-1]):
-            if candle["close"] > candle["open"]:
-                order_block = {"type": "تقریبی نزولی", "low": candle["low"], "high": candle["high"]}
+        for idx in range(len(candles) - 2, search_start - 1, -1):
+            candidate = candles[idx]
+            if candidate["close"] <= candidate["open"]:
+                continue
+            impulse_index = None
+            for j in range(idx + 1, min(len(candles), idx + 6)):
+                impulse = candles[j]
+                body_size = abs(impulse["close"] - impulse["open"])
+                if impulse["close"] < impulse["open"] and impulse["close"] < candidate["low"] and body_size >= 0.8 * atr:
+                    impulse_index = j
+                    break
+            if impulse_index is not None:
+                mitigated = any(
+                    candles[j]["high"] >= candidate["low"] and candles[j]["low"] <= candidate["high"]
+                    for j in range(impulse_index + 1, len(candles))
+                )
+                order_block = {
+                    "type": "تقریبی نزولی", "low": candidate["low"], "high": candidate["high"],
+                    "origin_time": candidate["time"], "displacement_time": candles[impulse_index]["time"],
+                    "mitigated": mitigated, "validation": "opposite candle + bearish displacement close below zone"
+                }
                 break
 
     notes = [
