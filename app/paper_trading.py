@@ -313,6 +313,8 @@ def list_paper_trades(limit=100):
         row["remaining_fraction"] = remaining_fraction
     closed_r = [float(r["realized_r"] or 0) for r in closed_rows]
     wins = sum(1 for x in closed_r if x > 0)
+    open_pnl = round(sum(float(row.get("total_pnl") or 0) for row in rows
+                         if row.get("status") in ("ACTIVE", "TP1_HIT")), 4)
     return {
         "available": True, "mode": "PAPER_ONLY",
         "stats": {
@@ -322,6 +324,10 @@ def list_paper_trades(limit=100):
             "stopped": int(stats["stopped"] or 0), "closed": len(closed_r),
             "win_rate_percent": round(wins / len(closed_r) * 100, 2) if closed_r else None,
             "net_r": round(sum(closed_r), 3),
+            "open_pnl": open_pnl,
+            "virtual_balance_per_trade": float(os.getenv("PAPER_INITIAL_BALANCE", "10000")),
+            "risk_per_trade_percent": 0.5,
+            "max_leverage": max(1.0, min(5.0, float(os.getenv("PAPER_MAX_LEVERAGE", "5")))),
         },
         "trades": rows
     }
