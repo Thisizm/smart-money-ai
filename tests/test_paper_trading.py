@@ -39,7 +39,7 @@ class PaperTradingTests(unittest.TestCase):
         second = paper_trading.record_signal(self.sample_signal())
         self.assertTrue(first["recorded"])
         self.assertTrue(second["duplicate"])
-        self.assertEqual(paper_trading.list_paper_trades()["stats"]["active"], 1)
+        self.assertEqual(paper_trading.list_paper_trades()["stats"]["pending_entry"], 1)
 
     def test_stale_or_proxy_quote_is_not_recorded(self):
         signal = self.sample_signal()
@@ -51,6 +51,11 @@ class PaperTradingTests(unittest.TestCase):
 
     def test_tp1_partial_then_tp2_closes_trade(self):
         paper_trading.record_signal(self.sample_signal())
+        paper_trading.monitor_open_trades(
+            lambda market, symbol: {"available": True, "price": 100.0,
+                                    "age_seconds": 1, "is_proxy": False}
+        )
+        self.assertEqual(paper_trading.list_paper_trades()["trades"][0]["status"], "ACTIVE")
         paper_trading.monitor_open_trades(
             lambda market, symbol: {"available": True, "price": 103.2,
                                     "age_seconds": 1, "is_proxy": False}
@@ -66,6 +71,10 @@ class PaperTradingTests(unittest.TestCase):
 
     def test_stop_loss_closes_trade_as_loss(self):
         paper_trading.record_signal(self.sample_signal())
+        paper_trading.monitor_open_trades(
+            lambda market, symbol: {"available": True, "price": 100.0,
+                                    "age_seconds": 1, "is_proxy": False}
+        )
         paper_trading.monitor_open_trades(
             lambda market, symbol: {"available": True, "price": 97.9,
                                     "age_seconds": 1, "is_proxy": False}
