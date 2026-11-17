@@ -140,7 +140,7 @@ def _session_levels(candles):
         return {"available": False}
     current = days[keys[-1]]
     previous = days[keys[-2]] if len(keys) > 1 else None
-    result = {"available": True, "session": "UTC", "current_high": current["high"], "current_low": current["low"]}
+    result = {"available": True, "session": "UTC candle-date grouping", "current_high": current["high"], "current_low": current["low"]}
     if previous:
         pivot = (previous["high"] + previous["low"] + previous["close"]) / 3.0
         result.update({
