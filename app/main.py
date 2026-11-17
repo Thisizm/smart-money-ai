@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .pro_analysis import advanced_analysis
+from .backtesting import run_research_backtest
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(APP_DIR)
@@ -677,6 +678,14 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             "available": False,
             "note": "منبع عمومی فعلی برای مشتقات و دفتر سفارش طلا/نقره به این برنامه متصل نیست."
         }
+    return result
+
+
+@app.get("/api/backtest")
+def api_backtest(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str = "1h"):
+    candles = completed_candles(get_candles(market, symbol, timeframe), timeframe)
+    result = run_research_backtest(candles, timeframe)
+    result.update({"market": market, "symbol": symbol, "updated_at": utc_now()})
     return result
 
 
