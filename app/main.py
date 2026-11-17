@@ -1070,6 +1070,7 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
         "volume": c.get("volume", 0) or 0
     } for c in chart_bars]
     result["chart_source"] = result.get("candle_source")
+    result["chart_source_symbol"] = (chart_bars[-1].get("source_symbol") if chart_bars else None) or (symbol if market == "crypto" else None)
     marker_time = int(chart_bars[-1]["time"] // 1000) if chart_bars else None
     result["chart_markers"] = []
     if marker_time and result.get("signal") == "BUY":
