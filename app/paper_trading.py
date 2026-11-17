@@ -233,7 +233,7 @@ def list_paper_trades(limit=100):
         ).fetchall()]
         stats = con.execute("""
             SELECT COUNT(*) AS total,
-                   SUM(CASE WHEN status IN ('PENDING_ENTRY','ACTIVE','TP1_HIT') THEN 1 ELSE 0 END) AS active,
+                   SUM(CASE WHEN status IN ('ACTIVE','TP1_HIT') THEN 1 ELSE 0 END) AS active,
                    SUM(CASE WHEN status IN ('TP1_HIT','TP2_HIT','SL_HIT','SL_AFTER_TP1') THEN 1 ELSE 0 END) AS tp1_touched,
                    SUM(CASE WHEN status='TP2_HIT' THEN 1 ELSE 0 END) AS tp2,
                    SUM(CASE WHEN status IN ('SL_HIT','SL_AFTER_TP1') THEN 1 ELSE 0 END) AS stopped,
