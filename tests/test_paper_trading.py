@@ -90,6 +90,31 @@ class PaperTradingTests(unittest.TestCase):
         self.assertGreater(trade["unrealized_pnl"], 0)
         self.assertGreater(trade["total_pnl"], 0)
 
+    def test_manual_close_active_trade_records_exit_and_pnl(self):
+        paper_trading.record_signal(self.sample_signal())
+        paper_trading.monitor_open_trades(
+            lambda market, symbol: {"available": True, "price": 100.0,
+                                    "age_seconds": 1, "is_proxy": False}
+        )
+        result = paper_trading.close_paper_trade(1, exit_price=101.0)
+        self.assertTrue(result["closed"])
+        trade = paper_trading.list_paper_trades()["trades"][0]
+        self.assertEqual(trade["status"], "MANUAL_CLOSED")
+        self.assertAlmostEqual(trade["exit_price"], 101.0)
+        self.assertGreater(trade["realized_r"], 0)
+        self.assertEqual(paper_trading.list_paper_trades()["stats"]["closed"], 1)
+
+    def test_manual_cancel_pending_entry_is_not_counted_as_win_or_loss(self):
+        paper_trading.record_signal(self.sample_signal())
+        result = paper_trading.close_paper_trade(1)
+        self.assertTrue(result["closed"])
+        data = paper_trading.list_paper_trades()
+        self.assertEqual(data["trades"][0]["status"], "MANUAL_CLOSED")
+        self.assertEqual(data["stats"]["closed"], 1)
+        self.assertIsNone(data["stats"]["win_rate_percent"])
+        self.assertEqual(data["stats"]["net_r"], 0)
+
+
     def test_stop_loss_closes_trade_as_loss(self):
         paper_trading.record_signal(self.sample_signal())
         paper_trading.monitor_open_trades(
