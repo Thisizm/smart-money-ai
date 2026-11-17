@@ -327,16 +327,21 @@ def close_paper_trade(trade_id, exit_price=None):
 def list_paper_trades(limit=100):
     limit = max(1, min(int(limit), 300))
     with _LOCK, _connect() as con:
-        rows = [dict(r) for r in con.execute(
-            "SELECT * FROM paper_trades ORDER BY COALESCE(closed_at, created_at) DESC, id DESC LIMIT ?", (limit,)
+        active_rows = [dict(r) for r in con.execute(
+            "SELECT * FROM paper_trades WHERE status IN ('PENDING_ENTRY','ACTIVE','TP1_HIT') ORDER BY created_at DESC, id DESC"
         ).fetchall()]
+        history_rows = [dict(r) for r in con.execute(
+            "SELECT * FROM paper_trades WHERE status NOT IN ('PENDING_ENTRY','ACTIVE','TP1_HIT') ORDER BY COALESCE(closed_at, updated_at, created_at) DESC, id DESC LIMIT ?", (limit,)
+        ).fetchall()]
+        rows = active_rows + history_rows
         stats = con.execute("""
             SELECT COUNT(*) AS total,
                    SUM(CASE WHEN status IN ('ACTIVE','TP1_HIT') THEN 1 ELSE 0 END) AS active,
                    SUM(CASE WHEN status IN ('TP1_HIT','TP2_HIT','SL_HIT','SL_AFTER_TP1') THEN 1 ELSE 0 END) AS tp1_touched,
                    SUM(CASE WHEN status='TP2_HIT' THEN 1 ELSE 0 END) AS tp2,
                    SUM(CASE WHEN status IN ('SL_HIT','SL_AFTER_TP1') THEN 1 ELSE 0 END) AS stopped,
-                   SUM(CASE WHEN status IN ('TP2_HIT','SL_HIT','SL_AFTER_TP1','MANUAL_CLOSED','INVALIDATED_BEFORE_ENTRY') THEN 1 ELSE 0 END) AS closed
+                   SUM(CASE WHEN status IN ('TP2_HIT','SL_HIT','SL_AFTER_TP1','MANUAL_CLOSED','INVALIDATED_BEFORE_ENTRY') THEN 1 ELSE 0 END) AS closed,
+                   SUM(CASE WHEN status='PENDING_ENTRY' THEN 1 ELSE 0 END) AS pending_entry
             FROM paper_trades
         """).fetchone()
         closed_rows = con.execute("""
@@ -373,7 +378,7 @@ def list_paper_trades(limit=100):
         "history_trades": history_trades,
         "stats": {
             "total": int(stats["total"] or 0), "active": int(stats["active"] or 0),
-            "pending_entry": sum(1 for row in rows if row["status"] == "PENDING_ENTRY"),
+            "pending_entry": int(stats["pending_entry"] or 0),
             "tp1_touched": int(stats["tp1_touched"] or 0), "tp2": int(stats["tp2"] or 0),
             "stopped": int(stats["stopped"] or 0), "closed": int(stats["closed"] or 0),
             "win_rate_percent": round(wins / len(closed_r) * 100, 2) if closed_r else None,
