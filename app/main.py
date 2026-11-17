@@ -788,6 +788,7 @@ def analyze(candles, market, symbol, timeframe):
             bear = min(100, bear + 2)
             order_block_adjustment = 2
         setup_score = min(100, max(bull, bear))
+        bias = "صعودی" if bull - bear >= 6 else "نزولی" if bear - bull >= 6 else "خنثی"
         order_block["score_adjustment"] = order_block_adjustment
 
     notes = [
