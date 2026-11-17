@@ -53,9 +53,9 @@ function renderScenario(d){
 }
 function renderLiquidationHeatmap(data,currentPrice){
  const panel=document.getElementById("liq-panel"),canvas=document.getElementById("liq-heatmap"),note=document.getElementById("liq-heatmap-note"),source=document.getElementById("liq-source"),clustersEl=document.getElementById("liq-clusters");
- if(currentAnalysisMarket!=="crypto"){panel.hidden=true;return}
- panel.hidden=false;
  if(heatmapResizeObserver){heatmapResizeObserver.disconnect();heatmapResizeObserver=null}
+ if(currentAnalysisMarket!=="crypto"){panel.hidden=true;return}
+ panel.hidden=false
  if(!data||!data.available||!Array.isArray(data.liquidation_leverage_data)||!data.liquidation_leverage_data.length){
   canvas.hidden=true;source.textContent="CoinGlass";
   note.textContent=(data&&data.note)||"نقشه لیکوییدیشن در دسترس نیست.";
