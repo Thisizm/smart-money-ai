@@ -1319,7 +1319,6 @@ def _build_dominance_payload(source, raw):
 
 
 @app.get("/api/dominance")
-@app.get("/api/dominance")
 def dominance():
     now = time.time()
     with DOMINANCE_LOCK:
