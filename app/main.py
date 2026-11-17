@@ -980,7 +980,7 @@ def status():
             "metals_prices": "Twelve Data XAU/USD and XAG/USD spot when entitled; Yahoo Finance fallback, including COMEX SI=F futures proxy for silver",
             "metal_instrument_note": "Silver SI=F fallback is a COMEX continuous futures proxy, not XAG/USD spot; provider feeds can differ.",
             "crypto_dominance": "Market-cap dominance from CoinGecko" + ("; CoinMarketCap fallback key configured" if COINMARKETCAP_API_KEY else "; optional CoinMarketCap fallback key not set") + "; Binance Spot is used for exchange prices, not global dominance",
-            "liquidation_heatmap": "MarginPad keyless liquidation clusters (model estimates) + observed liquidation events; cached 45 seconds; no API key required",
+            "liquidation_heatmap": "غیرفعال؛ خوشه‌های تخمینی از امتیازدهی و رابط حذف شدند",
             "global_news": "GDELT DOC 2.0",
             "macro_indicators": "FRED " + ("configured" if FRED_API_KEY else "key_required"),
             "ai_synthesis": "OpenAI " + ("configured" if AI_API_KEY else "key_required"),
@@ -1088,22 +1088,16 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     result["candle_source"] = (candles[-1].get("source") if candles else None) or ("Binance Spot" if market == "crypto" else "Twelve Data / Yahoo Finance metals fallback")
     result["live_quote"] = get_live_quote(market, symbol)
     if market == "crypto":
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            heatmap_future = pool.submit(get_marginpad_liquidation_heatmap, symbol)
-            derivatives_future = pool.submit(get_crypto_derivatives, symbol)
-            heatmap = heatmap_future.result()
-            result["derivatives"] = derivatives_future.result()
-        result["liquidation_heatmap"] = heatmap
-        result["liquidation_context"] = build_liquidation_context(
-            result, heatmap, (result["live_quote"].get("price") if result["live_quote"].get("available") else result.get("price"))
-        )
+        # Skip the hard-to-read third-party heatmap fetch. Keep observable Binance
+        # derivatives metrics as the source for positioning context.
+        result["derivatives"] = get_crypto_derivatives(symbol)
     else:
-        result["liquidation_heatmap"] = {"available": False, "source": "MarginPad", "note": "نقشه لیکوییدیشن MarginPad فقط برای بازار کریپتو فعال است."}
-        result["liquidation_context"] = {"available": False, "note": "برای فلزات نقشه لیکوییدیشن کریپتو کاربرد ندارد."}
         result["derivatives"] = {
             "available": False,
-            "note": "منبع عمومی فعلی برای مشتقات و دفتر سفارش طلا/نقره به این برنامه متصل نیست."
+            "note": "داده مشتقات عمومی طلا/نقره در این نسخه متصل نیست."
         }
+    result["liquidation_heatmap"] = {"available": False, "disabled": True, "note": "نقشه شلوغ قبلی حذف شد."}
+    result["liquidation_context"] = {"available": False, "note": "برای جلوگیری از امتیازدهی به خوشه‌های تخمینی نامطمئن، از امتیاز سیگنال حذف شد."}
     chart_bars = completed_candles(candles, timeframe)[-220:]
     result["chart_candles"] = [{
         "time": int(c["time"] // 1000),
