@@ -49,6 +49,25 @@ function renderScenario(d){
   el.textContent="فعلاً سیگنال قطعی وجود ندارد. "+(a.location||"برای ورود منتظر تأیید بمان.");
  }
 }
+function renderSmartEntryChart(d,plan,side){
+ const el=document.getElementById("smart-entry-chart"),legend=document.getElementById("smart-entry-legend");
+ if(!el||!window.LightweightCharts||!Array.isArray(d.chart_candles)||!d.chart_candles.length){if(el)el.textContent="داده نمودار در دسترس نیست";return}
+ if(smartEntryChart){smartEntryChart.remove();smartEntryChart=null}
+ el.innerHTML="";
+ smartEntryChart=LightweightCharts.createChart(el,{width:Math.max(280,el.clientWidth||window.innerWidth-60),height:260,layout:{background:{color:"#0b172a"},textColor:"#cbd6e8",fontFamily:"Tahoma"},grid:{vertLines:{color:"#17253b"},horzLines:{color:"#17253b"}},rightPriceScale:{borderColor:"#405477"},timeScale:{borderColor:"#405477",timeVisible:true},localization:{locale:"en-US"}});
+ const cs=smartEntryChart.addCandlestickSeries({upColor:"#28c997",downColor:"#ff7182",borderVisible:false,wickUpColor:"#28c997",wickDownColor:"#ff7182"});
+ cs.setData(d.chart_candles);
+ const lines=[];
+ const add=(value,color,title)=>{if(value==null||!Number.isFinite(Number(value)))return;cs.createPriceLine({price:Number(value),color,lineWidth:2,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title});lines.push('<span class="legend-chip" style="border-color:'+color+'">'+title+' '+fmt(Number(value))+'</span>')};
+ add(plan.zone?.low,"#38bdf8","کف ناحیه");add(plan.zone?.high,"#38bdf8","سقف ناحیه");
+ add(plan.entry,"#facc15",plan.status==="CONFIRMED_ON_CLOSED_CANDLE"?"تریگر":"ورود مرجع");
+ add(plan.stop_loss,"#fb7185","حد ضرر");
+ (plan.targets||[]).forEach((x,i)=>add(x,"#4ade80","هدف "+(i+1)));
+ const q=d.live_quote||{};if(q.available)add(q.price,"#7dd3fc","قیمت زنده");
+ legend.innerHTML=lines.join("");
+ smartEntryChart.timeScale().fitContent();
+ if(typeof ResizeObserver!=="undefined"){if(smartEntryResizeObserver)smartEntryResizeObserver.disconnect();smartEntryResizeObserver=new ResizeObserver(()=>{if(smartEntryChart&&el.clientWidth>0)smartEntryChart.applyOptions({width:el.clientWidth})});smartEntryResizeObserver.observe(el)}
+}
 function renderSmartEntry(d){
  const el=document.getElementById("smart-entry"),p=d.smart_entry||{};
  if(!el)return;
