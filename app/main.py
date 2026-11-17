@@ -979,13 +979,29 @@ def analyze(candles, market, symbol, timeframe):
 
     smart_long = make_pullback_plan("long")
     smart_short = make_pullback_plan("short")
-    preferred_side = "long" if bull - bear >= 8 else "short" if bear - bull >= 8 else "neutral"
+    # Prefer the final signal; if it is WAIT, fall back to the directional bias.
+    # Risk-blocked means no trade is permitted, even when a directional bias exists.
+    preferred_side = (
+        "long" if direction == "BUY" else
+        "short" if direction == "SELL" else
+        "long" if bias == "صعودی" else
+        "short" if bias == "نزولی" else "neutral"
+    )
+    primary_alignment = (
+        "aligned" if (direction == "BUY" and preferred_side == "long") or
+                     (direction == "SELL" and preferred_side == "short") else
+        "wait_or_blocked" if direction == "WAIT" else "neutral"
+    )
     smart_entry = {
         "preferred_side": preferred_side,
+        "primary_signal": direction,
+        "primary_bias": bias,
+        "primary_alignment": primary_alignment,
         "long": smart_long, "short": smart_short,
         "risk_gate_passed": not risk_blocked,
+        "risk_flags": risk_flags,
         "method": "nearest unmitigated OB/FVG or EMA21 pullback; closed-candle reaction required",
-        "note": "ناحیه‌ها تخمینی‌اند و امتیازها احتمال آماری موفقیت نیستند. قیمت زنده را پیش از هر تصمیم دوباره بررسی کن."
+        "note": "جهت ترجیحی از سیگنال نهایی و سوگیری تحلیل گرفته شده است؛ فیلتر ریسک مسدود یعنی ورود مجاز نیست. ناحیه‌ها تخمینی‌اند و امتیازها احتمال آماری موفقیت نیستند."
     }
     return {
         "market": market, "symbol": symbol, "timeframe": timeframe,
