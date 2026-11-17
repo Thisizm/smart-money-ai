@@ -10,6 +10,9 @@ import urllib.parse
 import urllib.request
 
 
+DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+
+
 def build_prompt(evidence):
     return (
         "تو مغز تحلیل‌گر اصلی یک سامانه تصمیم‌یار بازار هستی. فقط از شواهد JSON استفاده کن؛ "
@@ -34,7 +37,7 @@ def build_prompt(evidence):
         "conflicts:[string], risk_flags:[string], data_quality:[string], "
         "setup_quality:integer}. setup_quality فقط امتیاز کیفیت شواهد از 0 تا 100 است، نه احتمال برد. "
         "اگر WAIT است، سطوح ورود/حدضرر/اهداف را null یا آرایه خالی قرار بده. "
-        "زبان تمام متن‌ها فارسی باشد. شواهد JSON:\n"
+        "زبان تمام متن‌ها فارسی باشد. شواهد JSON:\\n"
         + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), default=str)
     )
 
@@ -42,7 +45,7 @@ def build_prompt(evidence):
 def _extract_json(text):
     raw = (text or "").strip()
     if raw.startswith("```"):
-        raw = raw.strip("``")
+        raw = raw.strip("```")
         if raw.lower().startswith("json"):
             raw = raw[4:].strip()
     start, end = raw.find("{"), raw.rfind("}")
@@ -51,19 +54,7 @@ def _extract_json(text):
     return json.loads(raw[start:end + 1])
 
 
-def call_gemini(evidence):
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY تنظیم نشده است")
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
-    body = json.dumps({
-        "contents": [{"parts": [{"text": build_prompt(evidence)}]}],
-        "generationConfig": {
-            "temperature": 0.15,
-            "maxOutputTokens": 1800,
-            "responseMimeType": "application/json"
-        }
-    }).encode("utf-8")
+def _gemini_request(model, api_key, body):
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
         + urllib.parse.quote(model, safe="")
@@ -74,13 +65,45 @@ def call_gemini(evidence):
         headers={"Content-Type": "application/json"},
         method="POST"
     )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def call_gemini(evidence):
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY تنظیم نشده است")
+    model = os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
+    body = json.dumps({
+        "contents": [{"parts": [{"text": build_prompt(evidence)}]}],
+        "generationConfig": {
+            "temperature": 0.15,
+            "maxOutputTokens": 1800,
+            "responseMimeType": "application/json"
+        }
+    }).encode("utf-8")
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            data = json.loads(response.read().decode("utf-8"))
+        try:
+            data = _gemini_request(model, api_key, body)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "ignore")[:500]
+            # A stale Render environment variable may still pin the retired 2.5 model.
+            # Retry once with the currently configured default; never mask quota errors.
+            if exc.code == 404 and model != DEFAULT_GEMINI_MODEL:
+                model = DEFAULT_GEMINI_MODEL
+                data = _gemini_request(model, api_key, body)
+            else:
+                if exc.code == 429:
+                    raise RuntimeError("سهمیه رایگان Gemini موقتاً تمام شده یا محدودیت سرعت فعال است؛ بعداً دوباره تلاش کن. " + detail)
+                if exc.code == 404:
+                    raise RuntimeError("مدل Gemini در دسترس نیست: " + detail)
+                raise RuntimeError("خطای Gemini HTTP " + str(exc.code) + ": " + detail)
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "ignore")[:300]
+        detail = exc.read().decode("utf-8", "ignore")[:500]
         if exc.code == 429:
             raise RuntimeError("سهمیه رایگان Gemini موقتاً تمام شده یا محدودیت سرعت فعال است؛ بعداً دوباره تلاش کن. " + detail)
+        if exc.code == 404:
+            raise RuntimeError("مدل Gemini جایگزین نیز در دسترس نیست: " + detail)
         raise RuntimeError("خطای Gemini HTTP " + str(exc.code) + ": " + detail)
     candidates = data.get("candidates") or []
     chunks = []
@@ -91,7 +114,7 @@ def call_gemini(evidence):
     if not chunks:
         reason = (candidates[0].get("finishReason") if candidates else None) or "پاسخ خالی"
         raise RuntimeError("Gemini پاسخ قابل استفاده نداد: " + str(reason))
-    result = _extract_json("\n".join(chunks))
+    result = _extract_json("\\n".join(chunks))
     if not isinstance(result, dict):
         raise RuntimeError("ساختار پاسخ هوش مصنوعی معتبر نیست")
     result["provider"] = "Google Gemini"
