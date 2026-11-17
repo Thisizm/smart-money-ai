@@ -41,6 +41,10 @@ function renderScenario(d){
  if(d.signal==="BUY"||d.signal==="SELL"){
   lines.push("پلن معامله: ورود مرجع "+fmt(p.entry)+" | حد ضرر "+fmt(p.stop_loss)+" | اهداف "+(p.targets||[]).map(fmt).join(" / "));
   lines.push("مبنای ورود: "+(p.entry_basis||"آخرین کندل بسته‌شده"));
+ }else{
+  const c=d.conditional_scenarios||{},b=c.bullish||{},s=c.bearish||{};
+  lines.push("پلن مشروط خرید (فقط پس از تأیید): ورود "+fmt(b.entry)+" | حد ضرر "+fmt(b.stop_loss)+" | اهداف "+(b.targets||[]).map(fmt).join(" / "));
+  lines.push("پلن مشروط فروش (فقط پس از تأیید): ورود "+fmt(s.entry)+" | حد ضرر "+fmt(s.stop_loss)+" | اهداف "+(s.targets||[]).map(fmt).join(" / "));
  }
  el.textContent=lines.filter(Boolean).join("\n\n");
 }
