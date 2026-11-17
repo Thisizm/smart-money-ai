@@ -12,7 +12,7 @@
 <section id="ai" hidden><div class="panel"><h3>جمع‌بندی هوش مصنوعی</h3><p class="small">ابتدا تحلیل تکنیکال یا خبرها را دریافت کن. نیازمند AI_API_KEY در Render است و استفاده از API ممکن است هزینه داشته باشد.</p><button onclick="ai()">ساخت جمع‌بندی</button><div id="aistatus" class="muted"></div><pre id="aiout"></pre></div></section>
 <div class="panel"><b>وضعیت منابع</b><div id="providers" class="small">در حال بررسی…</div></div><div class="panel small">معامله خودکار خاموش است و سفارش واقعی ثبت نمی‌شود. کلیدهای API را فقط در Environment Variables در Render وارد کن، نه در چت یا کد عمومی. هیچ سیستم معاملاتی سود تضمینی ندارد.</div></main>
 <script>
-const coins=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","AVAXUSDT","LTCUSDT","TRXUSDT","DOTUSDT","BCHUSDT","NEARUSDT","UNIUSDT","SUIUSDT","TONUSDT","ETCUSDT","APTUSDT","ARBUSDT"];let lastA=null,lastC=null;
+const coins=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","AVAXUSDT","LTCUSDT","TRXUSDT","DOTUSDT","BCHUSDT","NEARUSDT","UNIUSDT","SUIUSDT","TONUSDT","ETCUSDT","APTUSDT","ARBUSDT"];let lastA=null,lastC=null,lastCorr=null;
 document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll("main section").forEach(s=>s.hidden=true);document.getElementById(b.dataset.id).hidden=false});
 function symbols(){let m=document.getElementById("market").value,a=m==="crypto"?coins:[m==="gold"?"XAU/USD":"XAG/USD"];document.getElementById("symbol").innerHTML=a.map(x=>'<option>'+x+'</option>').join("")}
 function fmt(v){return v==null?"—":(typeof v==="number"?v.toLocaleString("en-US",{maximumFractionDigits:6}):String(v))}
@@ -72,11 +72,11 @@ async function context(){cstatus.textContent="در حال دریافت…";try{l
 async function correlations(){
  const el=document.getElementById("corrout");el.textContent="در حال محاسبه همبستگی…";
  try{
-  const d=await get("/api/correlations");
+  const d=await get("/api/correlations");lastCorr=d;
   el.innerHTML="<h3>همبستگی بازده روزانه ۳۰ و ۹۰ روزه</h3>"+d.pairs.map(x=>'<div class="item"><b>'+x.pair+'</b> | ۳۰ روز: '+fmt(x.correlation_30d)+' | ۹۰ روز: '+fmt(x.correlation_90d)+' | مشاهدات: '+x.observations+'</div>').join("")+'<div class="small">'+d.note+'</div>'+(d.errors||[]).map(x=>'<div class="small">'+x+'</div>').join("");
  }catch(e){el.textContent="خطا: "+e.message}
 }
 async function scanner(){sstatus.textContent="در حال اسکن…";try{let d=await get("/api/scanner?market="+sm.value+"&timeframe="+st.value+"&limit=20");sresults.innerHTML=d.results.map(x=>'<div class="item"><b>'+x.symbol+"</b> — "+x.signal+" | جهت: "+(x.bias||"—")+" | امتیاز: "+(x.setup_score??"—")+"<br>"+(x.error||"قیمت: "+fmt(x.price))+"</div>").join("");sstatus.textContent="اسکن تمام شد"}catch(e){sstatus.textContent="خطا: "+e.message}}
-async function ai(){aistatus.textContent="در حال پردازش…";if(!lastA&&!lastC){aistatus.textContent="اول تحلیل یا خبرها را دریافت کن";return}try{let d=await get("/api/ai-synthesis",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({technical:lastA,market_context:lastC})});aiout.textContent=d.analysis;aistatus.textContent="آماده شد"}catch(e){aistatus.textContent="خطا: "+e.message}}
+async function ai(){aistatus.textContent="در حال پردازش…";if(!lastA&&!lastC){aistatus.textContent="اول تحلیل یا خبرها را دریافت کن";return}try{let d=await get("/api/ai-synthesis",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({technical:lastA,market_context:lastC,correlations:lastCorr})});aiout.textContent=d.analysis;aistatus.textContent="آماده شد"}catch(e){aistatus.textContent="خطا: "+e.message}}
 async function status(){try{let d=await get("/api/status");providers.textContent=Object.entries(d.providers).map(x=>x[0]+": "+x[1]).join(" | ")+" | معاملات واقعی: خاموش"}catch(e){providers.textContent="خطای اتصال: "+e.message}}symbols();status();
 </script></body></html>
