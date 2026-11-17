@@ -24,3 +24,20 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Import FastAPI application
         run: python -c "from app.main import app; print(app.title)"
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check dashboard JavaScript syntax
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          html = Path("static/index.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script\\b[^>]*>(.*?)</script>", html, re.S)
+          inline = [script for script in scripts if script.strip()]
+          if not inline:
+              raise SystemExit("No inline dashboard script found")
+          Path("/tmp/dashboard.js").write_text("\\n".join(inline), encoding="utf-8")
+          PY
+          node --check /tmp/dashboard.js
