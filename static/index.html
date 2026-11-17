@@ -143,39 +143,6 @@ function renderSmartEntry(d){
  el.innerHTML='<b>'+stateTitle+'</b><div class="smart-summary">جهت: '+side+'<br>محدوده ورود: '+fmt(plan.zone.low)+' تا '+fmt(plan.zone.high)+'<br>قیمت پیشنهادی/تریگر: '+fmt(plan.entry)+'<br>حد ضرر: '+fmt(plan.stop_loss)+'<br>هدف اول: '+fmt((plan.targets||[])[0])+'<br>هدف دوم: '+fmt((plan.targets||[])[1])+'</div><div class="small">'+stateNote+'</div>';
  renderSmartEntryChart(d,plan,side);
 }
-async function togglePaperEntry(source,enabled){
- const market=currentAnalysisMarket,symbol=currentAnalysisSymbol,timeframe=lastA?.timeframe||tf.value;
- const checkbox=document.getElementById(source==="primary"?"primary-paper-auto":"smart-paper-auto");
- const status=document.getElementById(source==="primary"?"primary-paper-status":"smart-entry-action-status");
- if(!market||!symbol||!lastA||lastA.quote_only){if(checkbox)checkbox.checked=false;return;}
- if(status)status.textContent=enabled?"در حال بررسی تحلیل و ثبت سفارش شرطی…":"در حال لغو سفارش شرطی در انتظار…";
- try{
-  const endpoint=enabled?"/api/paper-trading/arm":"/api/paper-trading/disarm";
-  const url=endpoint+"?market="+encodeURIComponent(market)+"&symbol="+encodeURIComponent(symbol)+"&timeframe="+encodeURIComponent(timeframe)+"&source="+encodeURIComponent(source);
-  const result=await get(url,{method:"POST"});
-  if(source==="primary")primaryPaperArmed=enabled;else smartPaperArmed=enabled;
-  if(status){if(enabled){const trade=result.paper_trade||{};status.textContent=trade.duplicate?"این سفارش شرطی قبلاً برای همین تحلیل ثبت شده است.":trade.status==="ACTIVE"?"قیمت همین حالا در محدوده ورود است؛ معامله آزمایشی فعال شد.":"سفارش شرطی ثبت شد؛ با رسیدن قیمت به محدوده ورود فعال می‌شود.";}else{status.textContent=(result.canceled_trade_ids||[]).length?"سفارش شرطی در انتظار لغو شد.":"سفارش در انتظار دیگری برای این تحلیل وجود نداشت؛ معامله فعال قبلی دست‌نخورده ماند.";}}
-  refreshPaperTrading();
- }catch(e){if(checkbox)checkbox.checked=!enabled;if(status)status.textContent="انجام نشد: "+e.message;if(source==="primary")primaryPaperArmed=!enabled;else smartPaperArmed=!enabled;}
-}
-async function resetPaperEntryToggles(){
- if(primaryPaperArmed)await togglePaperEntry("primary",false);
- if(smartPaperArmed)await togglePaperEntry("smart",false);
- primaryPaperArmed=false;smartPaperArmed=false;
- const a=document.getElementById("primary-paper-auto"),b=document.getElementById("smart-paper-auto");
- if(a)a.checked=false;if(b)b.checked=false;
-}
-function renderSmartEntry(d){
- const el=document.getElementById("smart-entry"),p=d.smart_entry||{};if(!el)return;
- const side=p.preferred_side==="long"?"خرید":p.preferred_side==="short"?"فروش":"نامشخص";
- const plan=p.preferred_side==="long"?p.long:p.preferred_side==="short"?p.short:null;
- if(!plan||!plan.available||!plan.zone){el.innerHTML='<b>فعلاً محدوده ورود هوشمند معتبر پیدا نشد.</b><div class="small">تحلیل اصلی و سیگنال آن مستقل از این بخش نمایش داده می‌شود.</div>';renderSmartEntryChart(d,null,side);return;}
- const ready=plan.status==="CONFIRMED_ON_CLOSED_CANDLE",invalid=plan.status==="INVALIDATED";
- const stateTitle=invalid?"سناریوی ورود هوشمند باطل شده":ready?"تریگر ورود هوشمند تأیید شده":"منتظر رسیدن قیمت و تأیید ورود";
- const stateNote=invalid?"حد ابطال ساختاری شکسته شده است.":ready?"واکنش کندل تأیید شده؛ قیمت زنده و ریسک را همچنان بررسی کن.":"محدوده ورود، پیشنهاد تحلیلی است؛ لمس محدوده با تضمین اجرا یا سود همراه نیست.";
- el.innerHTML='<b>'+stateTitle+'</b><div class="smart-summary">جهت: '+side+'<br>محدوده ورود: '+fmt(plan.zone.low)+' تا '+fmt(plan.zone.high)+'<br>قیمت پیشنهادی/تریگر: '+fmt(plan.entry)+'<br>حد ضرر: '+fmt(plan.stop_loss)+'<br>هدف اول: '+fmt((plan.targets||[])[0])+'<br>هدف دوم: '+fmt((plan.targets||[])[1])+'</div><div class="small">'+stateNote+'</div>';
- renderSmartEntryChart(d,plan,side);
-}
 
 function toggleChartFullscreen(){
  const panel=document.querySelector(".chart-panel");
