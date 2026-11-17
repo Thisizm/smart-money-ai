@@ -129,6 +129,9 @@ def run_research_backtest(candles, timeframe):
         return {"available": False, "message": "داده کافی برای بخش خارج از نمونه وجود ندارد."}
     in_sample = _simulate(candles, 60, split)
     out_sample = _simulate(candles, split, len(candles))
+    stressed_out_sample = _simulate(
+        candles, split, len(candles), fee_rate=0.0008, slippage_rate=0.0004
+    )
     return {
         "available": True,
         "strategy": "EMA 9/21 crossover + Wilder RSI + ADX directional filter",
@@ -137,6 +140,8 @@ def run_research_backtest(candles, timeframe):
         "split": {"in_sample_percent": 70, "out_of_sample_percent": 30, "chronological": True},
         "in_sample": in_sample,
         "out_of_sample": out_sample,
+        "out_of_sample_2x_cost_stress": stressed_out_sample,
+        "sample_warning": "اگر تعداد معاملات خارج از نمونه کمتر از ۳۰ باشد، معیارها بسیار ناپایدارند." if out_sample["trades"] < 30 else None,
         "assumptions": {
             "starting_equity_per_period": 10000,
             "risk_per_trade_percent": 0.5,
@@ -151,7 +156,7 @@ def run_research_backtest(candles, timeframe):
         "limitations": [
             "این بک‌تست یک استراتژی پایه EMA/RSI/ADX را می‌سنجد، نه تمام منطق سیگنال اصلی برنامه.",
             "داده OHLCV برای بازسازی ترتیب دقیق معاملات داخل کندل کافی نیست؛ برخورد همزمان حدضرر و هدف با فرض محافظه‌کارانه حدضرر حل می‌شود.",
-            "کارمزد و اسلیپیج فرضی‌اند؛ هزینه واقعی صرافی، اسپرد، funding و اثر بازار ممکن است بیشتر باشد.",
+            "کارمزد و اسلیپیج فرضی‌اند؛ هزینه واقعی صرافی، اسپرد، funding، هزینه قرض‌گیری شورت و اثر بازار ممکن است بیشتر باشد.",
             "نمونه تاریخی کوتاه و تعداد معامله کم، نتیجه آماری قابل اتکا نمی‌سازد؛ این گزارش تضمین عملکرد آینده نیست."
         ]
     }
