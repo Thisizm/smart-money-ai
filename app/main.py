@@ -51,6 +51,8 @@ NEWS_CACHE = {}
 GDELT_LOCK = threading.Lock()
 GDELT_LAST_REQUEST_AT = 0.0
 MACRO_CACHE = {"at": 0, "data": None}
+QUOTE_CACHE = {}
+QUOTE_CACHE_LOCK = threading.Lock()
 
 
 def utc_now():
@@ -205,7 +207,7 @@ def get_twelve_data_metals_candles(symbol, timeframe):
     tf = TIMEFRAMES[timeframe]
     params = urllib.parse.urlencode({
         "symbol": symbol, "interval": tf["twelve"], "outputsize": 250,
-        "apikey": TWELVE_DATA_API_KEY, "format": "JSON"
+        "apikey": TWELVE_DATA_API_KEY, "format": "JSON", "timezone": "UTC"
     })
     data = fetch_json("https://api.twelvedata.com/time_series?" + params)
     if "values" not in data:
@@ -232,6 +234,102 @@ def get_twelve_data_metals_candles(symbol, timeframe):
     if len(candles) < 50:
         raise RuntimeError("Twelve Data returned insufficient candles")
     return candles
+
+
+def get_live_quote(market, symbol):
+    """Fetch a separate live/last quote; candle analysis continues to use closed bars."""
+    cache_key = market + ":" + symbol
+    now = time.time()
+    with QUOTE_CACHE_LOCK:
+        cached = QUOTE_CACHE.get(cache_key)
+        if cached and now - cached["at"] < 3:
+            return cached["data"]
+
+    errors = []
+    result = None
+    if market == "crypto":
+        try:
+            params = urllib.parse.urlencode({"symbol": symbol})
+            data = fetch_json("https://api.binance.com/api/v3/ticker/24hr?" + params, timeout=8)
+            price = float(data["lastPrice"])
+            stamp_ms = int(data.get("closeTime") or int(now * 1000))
+            result = {
+                "available": True, "price": price, "source": "Binance Spot ticker",
+                "source_symbol": symbol, "source_timestamp": datetime.fromtimestamp(stamp_ms / 1000, tz=timezone.utc).isoformat(),
+                "age_seconds": max(0, int(now - stamp_ms / 1000)), "is_proxy": False,
+                "note": "قیمت آخرین معامله اسپات Binance؛ با نماد یا صرافی دیگر TradingView ممکن است تفاوت داشته باشد."
+            }
+        except Exception as exc:
+            errors.append("Binance ticker: " + str(exc)[:140])
+
+    elif market in METALS:
+        if TWELVE_DATA_API_KEY:
+            try:
+                params = urllib.parse.urlencode({
+                    "symbol": symbol, "apikey": TWELVE_DATA_API_KEY, "timezone": "UTC"
+                })
+                data = fetch_json("https://api.twelvedata.com/quote?" + params, timeout=12)
+                if data.get("close") is None:
+                    raise RuntimeError(str(data.get("message") or data.get("status") or "Quote has no close price"))
+                price = float(data["close"])
+                stamp = data.get("timestamp")
+                if stamp is not None:
+                    stamp = int(stamp)
+                else:
+                    stamp = int(now)
+                result = {
+                    "available": True, "price": price, "source": "Twelve Data Quote",
+                    "source_symbol": symbol, "source_timestamp": datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat(),
+                    "age_seconds": max(0, int(now - stamp)), "is_proxy": False,
+                    "note": "قیمت ارائه‌دهنده Twelve Data؛ مرجع و نماد TradingView باید یکسان باشد."
+                }
+            except Exception as exc:
+                errors.append("Twelve Data quote: " + str(exc)[:140])
+
+        if result is None:
+            tickers = {
+                "gold": ["XAUUSD=X", "GC=F"],
+                "silver": ["XAGUSD=X", "SI=F"]
+            }[market]
+            for ticker in tickers:
+                try:
+                    params = urllib.parse.urlencode({"range": "1d", "interval": "1m", "events": "history"})
+                    url = "https://query1.finance.yahoo.com/v8/finance/chart/" + urllib.parse.quote(ticker, safe="=") + "?" + params
+                    data = fetch_json(url, headers={
+                        "Accept": "application/json",
+                        "User-Agent": "Mozilla/5.0 (compatible; SmartMoneyAI/2.2)"
+                    }, timeout=12)
+                    chart = data.get("chart", {})
+                    if chart.get("error"):
+                        raise RuntimeError(str(chart["error"]))
+                    meta = (chart.get("result") or [{}])[0].get("meta", {})
+                    price = meta.get("regularMarketPrice")
+                    stamp = meta.get("regularMarketTime")
+                    if price is None:
+                        raise RuntimeError("Yahoo returned no regularMarketPrice")
+                    stamp = int(stamp or now)
+                    is_proxy = ticker in ("GC=F", "SI=F")
+                    result = {
+                        "available": True, "price": float(price),
+                        "source": "Yahoo Finance " + ("Futures proxy" if is_proxy else "Spot proxy"),
+                        "source_symbol": ticker, "source_timestamp": datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat(),
+                        "age_seconds": max(0, int(now - stamp)), "is_proxy": is_proxy,
+                        "note": ("قرارداد آتی است و قیمت آن با اسپات ممکن است فرق کند." if is_proxy else "فید Yahoo ممکن است تأخیردار باشد و الزاماً با فید TradingView یکی نیست.")
+                    }
+                    break
+                except Exception as exc:
+                    errors.append(ticker + ": " + str(exc)[:120])
+
+    if result is None:
+        result = {
+            "available": False, "price": None, "source": None,
+            "age_seconds": None, "errors": errors,
+            "note": "قیمت زنده دریافت نشد؛ قیمت کندل بسته‌شده را به‌عنوان قیمت زنده فرض نکن."
+        }
+
+    with QUOTE_CACHE_LOCK:
+        QUOTE_CACHE[cache_key] = {"at": now, "data": result}
+    return result
 
 
 def get_candles(market, symbol, timeframe):
@@ -650,10 +748,10 @@ def status():
         "markets": ["crypto", "gold", "silver"],
         "forex_enabled": False,
         "providers": {
-            "crypto_prices": "Binance public market data",
+            "crypto_prices": "Binance Spot live ticker + Binance closed OHLCV candles",
             "crypto_derivatives": "Binance public futures funding/OI/long-short + spot order-book snapshot",
-            "metals_prices": ("Twelve Data primary + Yahoo Finance fallback" if TWELVE_DATA_API_KEY else "Yahoo Finance public fallback; Twelve Data key optional"),
-            "crypto_dominance": "CoinGecko " + ("key_configured" if COINGECKO_API_KEY else "public_endpoint_attempt"),
+            "metals_prices": ("Twelve Data Quote + OHLCV; Yahoo Finance fallback" if TWELVE_DATA_API_KEY else "Yahoo Finance quote/ohlcv fallback; delayed feed and futures proxy possible"),
+            "crypto_dominance": "CoinGecko global endpoint with source timestamp" + ("; API key configured" if COINGECKO_API_KEY else "; public endpoint"),
             "global_news": "GDELT DOC 2.0",
             "macro_indicators": "FRED " + ("configured" if FRED_API_KEY else "key_required"),
             "ai_synthesis": "OpenAI " + ("configured" if AI_API_KEY else "key_required"),
@@ -753,6 +851,8 @@ def get_crypto_derivatives(symbol):
 def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str = "15m"):
     candles = get_candles(market, symbol, timeframe)
     result = analyze(candles, market, symbol, timeframe)
+    result["analysis_price"] = result.get("price")
+    result["live_quote"] = get_live_quote(market, symbol)
     if market == "crypto":
         result["derivatives"] = get_crypto_derivatives(symbol)
     else:
@@ -761,6 +861,17 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             "note": "منبع عمومی فعلی برای مشتقات و دفتر سفارش طلا/نقره به این برنامه متصل نیست."
         }
     return result
+
+
+@app.get("/api/quote")
+def api_quote(market: str = "crypto", symbol: str = "BTCUSDT"):
+    if market == "crypto" and symbol not in CRYPTO:
+        raise HTTPException(400, "نماد کریپتو در فهرست مجاز نیست")
+    if market in METALS and symbol != METALS[market]:
+        raise HTTPException(400, "نماد فلز نامعتبر است")
+    if market not in ("crypto", "gold", "silver"):
+        raise HTTPException(400, "بازار نامعتبر است")
+    return {"market": market, "symbol": symbol, "quote": get_live_quote(market, symbol), "checked_at": utc_now()}
 
 
 @app.get("/api/backtest")
@@ -893,12 +1004,16 @@ def dominance():
         btc = float(shares.get("btc", 0))
         eth = float(shares.get("eth", 0))
         usdt = float(shares.get("usdt", 0))
+        source_updated = global_data.get("updated_at")
+        source_updated_at = datetime.fromtimestamp(int(source_updated), tz=timezone.utc).isoformat() if source_updated else None
         return {
             "total_market_cap_usd": global_data.get("total_market_cap", {}).get("usd"),
             "total_volume_24h_usd": global_data.get("total_volume", {}).get("usd"),
             "btc": btc, "eth": eth, "usdt": usdt,
             "others_ex_btc_eth_usdt": max(0, 100 - btc - eth - usdt),
-            "updated_at": utc_now(), "source": "CoinGecko",
+            "updated_at": utc_now(), "source_updated_at": source_updated_at,
+            "source_age_seconds": max(0, int(time.time() - int(source_updated))) if source_updated else None,
+            "source": "CoinGecko",
             "note": "Others is calculated as the remaining share after BTC, ETH and USDT."
         }
     except Exception as exc:
@@ -1204,9 +1319,14 @@ def scanner(market: str = "all", timeframe: str = "15m", limit: int = 10):
             m, s = future_map[future]
             try:
                 result = analyze(future.result(), m, s, timeframe)
+                quote = get_live_quote(m, s)
                 results.append({
                     "market": m, "symbol": s, "signal": result["signal"],
                     "setup_score": result["setup_score"], "price": result["price"],
+                    "analysis_price": result["price"],
+                    "live_price": quote.get("price") if quote.get("available") else None,
+                    "quote_source": quote.get("source"),
+                    "quote_age_seconds": quote.get("age_seconds"),
                     "bias": result["bias"]
                 })
             except Exception as exc:
