@@ -5,25 +5,43 @@
 </style></head><body><header><div class="wrap"><h1>SMART MONEY AI</h1><div class="muted">تحلیل کریپتو، طلا و نقره | نسخه آزمایشی توسعه‌یافته</div></div></header>
 <main class="wrap">
 <div class="tabs"><button class="tab" data-id="analysis">تحلیل</button><button class="tab" data-id="dominance">دامیننس</button><button class="tab" data-id="context">اخبار و اقتصاد</button><button class="tab" data-id="scanner">اسکنر</button><button class="tab" data-id="ai">AI</button></div>
-<section id="analysis"><div class="panel"><div class="row"><div class="field"><label>بازار</label><select id="market" onchange="symbols()"><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div><div class="field"><label>نماد</label><select id="symbol"></select></div><div class="field"><label>تایم‌فریم</label><select id="tf"><option>5m</option><option selected>15m</option><option>1h</option><option>4h</option><option>1d</option><option>1w</option></select></div></div><div class="row" style="margin-top:10px"><button onclick="analyze()">تحلیل تکنیکال</button><button onclick="mtf()">چندتایم‌فریمی</button><button onclick="backtest()">بک‌تست تاریخی</button></div><div id="astatus" class="muted"></div></div><div id="ares" class="panel" hidden><h3 id="signal"></h3><div id="metrics" class="metrics"></div><ul id="reasons"></ul><div id="mtfout"></div><div id="prodetails"></div><div id="backtestout"></div><p class="small">امتیاز تجربی احتمال موفقیت نیست. پروفایل حجم، سطوح نقدینگی و Order Block از OHLCV عمومی تقریب زده می‌شوند و داده نهادی یا تیک‌به‌تیک نیستند.</p></div></section>
+<section id="analysis"><div class="panel"><div class="row"><div class="field"><label>بازار</label><select id="market" onchange="symbols()"><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div><div class="field"><label>نماد</label><select id="symbol"></select></div><div class="field"><label>تایم‌فریم</label><select id="tf"><option>5m</option><option selected>15m</option><option>1h</option><option>4h</option><option>1d</option><option>1w</option></select></div></div><div class="row" style="margin-top:10px"><button onclick="analyze()">تحلیل تکنیکال</button><button onclick="mtf()">چندتایم‌فریمی</button><button onclick="backtest()">بک‌تست تاریخی</button></div><div id="astatus" class="muted"></div></div><div id="ares" class="panel" hidden><h3 id="signal"></h3><div id="metrics" class="metrics"></div><div id="livequote" class="item">پس از تحلیل، قیمت زنده هر ۵ ثانیه به‌روزرسانی می‌شود.</div><ul id="reasons"></ul><div id="mtfout"></div><div id="prodetails"></div><div id="backtestout"></div><p class="small">امتیاز تجربی احتمال موفقیت نیست. پروفایل حجم، سطوح نقدینگی و Order Block از OHLCV عمومی تقریب زده می‌شوند و داده نهادی یا تیک‌به‌تیک نیستند.</p></div></section>
 <section id="dominance" hidden><div class="panel"><h3>دامیننس بازار</h3><button onclick="dominance()">به‌روزرسانی</button><div id="dstatus" class="muted"></div><div id="dmetrics" class="metrics"></div></div></section>
 <section id="context" hidden><div class="panel"><h3>اخبار و عوامل اثرگذار</h3><div class="row"><div class="field"><label>دارایی</label><select id="asset"><option value="gold">طلا</option><option value="silver">نقره</option><option value="crypto">کریپتو</option></select></div><button onclick="context()">دریافت اخبار و اقتصاد</button><button onclick="correlations()">همبستگی بازارها</button></div><div id="corrout"></div><div id="cstatus" class="muted"></div><div id="factors"></div><h3>موقعیت‌گیری هفتگی COT طلا/نقره</h3><div id="cot"></div><h3>اخبار</h3><div id="news"></div><h3>شاخص‌های اقتصاد آمریکا</h3><div id="macro"></div></div></section>
 <section id="scanner" hidden><div class="panel"><h3>اسکنر بازار</h3><div class="row"><div class="field"><label>بازار</label><select id="sm"><option value="all">همه</option><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div><div class="field"><label>تایم‌فریم</label><select id="st"><option>15m</option><option>1h</option><option>4h</option><option>1d</option></select></div></div><button onclick="scanner()" style="margin-top:10px">شروع اسکن</button><div id="sstatus" class="muted"></div><div id="sresults"></div></div></section>
 <section id="ai" hidden><div class="panel"><h3>جمع‌بندی هوش مصنوعی</h3><p class="small">ابتدا تحلیل تکنیکال یا خبرها را دریافت کن. نیازمند AI_API_KEY در Render است و استفاده از API ممکن است هزینه داشته باشد.</p><button onclick="ai()">ساخت جمع‌بندی</button><div id="aistatus" class="muted"></div><pre id="aiout"></pre></div></section>
 <div class="panel"><b>وضعیت منابع</b><div id="providers" class="small">در حال بررسی…</div></div><div class="panel small">معامله خودکار خاموش است و سفارش واقعی ثبت نمی‌شود. کلیدهای API را فقط در Environment Variables در Render وارد کن، نه در چت یا کد عمومی. هیچ سیستم معاملاتی سود تضمینی ندارد.</div></main>
 <script>
-const coins=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","AVAXUSDT","LTCUSDT","TRXUSDT","DOTUSDT","BCHUSDT","NEARUSDT","UNIUSDT","SUIUSDT","TONUSDT","ETCUSDT","APTUSDT","ARBUSDT"];let lastA=null,lastC=null,lastCorr=null;
+const coins=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","AVAXUSDT","LTCUSDT","TRXUSDT","DOTUSDT","BCHUSDT","NEARUSDT","UNIUSDT","SUIUSDT","TONUSDT","ETCUSDT","APTUSDT","ARBUSDT"];let lastA=null,lastC=null,lastCorr=null,currentAnalysisMarket=null,currentAnalysisSymbol=null;
 document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll("main section").forEach(s=>s.hidden=true);document.getElementById(b.dataset.id).hidden=false});
 function symbols(){let m=document.getElementById("market").value,a=m==="crypto"?coins:[m==="gold"?"XAU/USD":"XAG/USD"];document.getElementById("symbol").innerHTML=a.map(x=>'<option>'+x+'</option>').join("")}
 function fmt(v){return v==null?"—":(typeof v==="number"?v.toLocaleString("en-US",{maximumFractionDigits:6}):String(v))}
 async function get(url,opt){let r=await fetch(url,opt),d=await r.json();if(!r.ok)throw Error(d.detail||"خطا");return d}
 function metric(k,v){return '<div class="metric"><span class="muted">'+k+'</span><br><b>'+v+'</b></div>'}
+function renderLiveQuote(q){
+ const el=document.getElementById("livequote");
+ if(!q||!q.available){el.textContent="قیمت زنده در دسترس نیست؛ از قیمت کندل بسته‌شده به‌عنوان قیمت لحظه‌ای استفاده نکن.";return}
+ el.textContent="قیمت زنده: "+fmt(q.price)+" | منبع: "+(q.source||"نامشخص")+" | نماد منبع: "+(q.source_symbol||"—")+" | زمان آخرین داده منبع: "+(q.source_timestamp||"نامشخص")+" | سن داده: "+(q.age_seconds==null?"نامشخص":q.age_seconds+" ثانیه")+" | "+(q.note||"")+(q.is_proxy?" | هشدار: قرارداد آتی/Proxy":"");
+ const cells=document.querySelectorAll("#metrics .metric b");
+ if(cells[0])cells[0].textContent=fmt(q.price);
+ if(cells[2])cells[2].textContent=q.age_seconds==null?"نامشخص":fmt(q.age_seconds)+" ثانیه";
+ if(cells[3])cells[3].textContent=q.source||"ناموجود";
+}
+async function refreshLiveQuote(){
+ if(!lastA||!currentAnalysisMarket||!currentAnalysisSymbol)return;
+ try{
+  const d=await get("/api/quote?market="+currentAnalysisMarket+"&symbol="+encodeURIComponent(currentAnalysisSymbol));
+  lastA.live_quote=d.quote;renderLiveQuote(d.quote);
+ }catch(e){document.getElementById("livequote").textContent="به‌روزرسانی قیمت زنده ناموفق بود: "+e.message}
+}
+
 function showA(d){
  lastA=d;
  let e=document.getElementById("signal");
  e.textContent=d.signal+" — جهت بازار: "+d.bias;
  e.className=d.signal==="BUY"?"buy":d.signal==="SELL"?"sell":"wait";
  const q=d.live_quote||{},a=d.advanced_analysis||{},v=a.volatility||{},adx=a.adx||{},mom=a.momentum||{},vp=a.volume_profile||{},liq=a.liquidity_map||{},pd=a.premium_discount||{},macd=a.macd||{},der=d.derivatives||{},ob=d.order_block_approx||{};
+ renderLiveQuote(q);
  document.getElementById("metrics").innerHTML=
  metric("قیمت لحظه‌ای",q.available?fmt(q.price):"دریافت نشد")+metric("قیمت مبنای تحلیل (کندل بسته)",fmt(d.analysis_price??d.price))+metric("سن قیمت زنده",q.age_seconds==null?"نامشخص":fmt(q.age_seconds)+" ثانیه")+metric("منبع قیمت",q.source||"ناموجود")+
  metric("حد ضرر",fmt(d.stop_loss))+metric("هدف ۱",fmt(d.take_profit_1))+metric("هدف ۲",fmt(d.take_profit_2))+
@@ -57,7 +75,7 @@ function showA(d){
  document.getElementById("prodetails").innerHTML=details.join("");
  document.getElementById("ares").hidden=false
 }
-async function analyze(){let s=document.getElementById("astatus");s.textContent="در حال دریافت داده…";try{let m=market.value,x=symbol.value,t=tf.value,d=await get("/api/analyze?market="+m+"&symbol="+encodeURIComponent(x)+"&timeframe="+t);showA(d);let q=d.live_quote||{};s.textContent=q.available?"تحلیل کندل بسته‌شده | قیمت زنده: "+fmt(q.price)+" | "+q.source+" | تأخیر منبع: "+(q.age_seconds==null?"نامشخص":q.age_seconds+" ثانیه")+(q.is_proxy?" | قیمت آتی/Proxy":""):"تحلیل دریافت شد، اما قیمت زنده در دسترس نیست؛ قیمت کندل را قیمت لحظه‌ای فرض نکن."}catch(e){s.textContent="خطا: "+e.message}}
+async function analyze(){let s=document.getElementById("astatus");s.textContent="در حال دریافت داده…";try{let m=market.value,x=symbol.value,t=tf.value;currentAnalysisMarket=m;currentAnalysisSymbol=x;let d=await get("/api/analyze?market="+m+"&symbol="+encodeURIComponent(x)+"&timeframe="+t);showA(d);let q=d.live_quote||{};s.textContent=q.available?"تحلیل کندل بسته‌شده | قیمت زنده: "+fmt(q.price)+" | "+q.source+" | تأخیر منبع: "+(q.age_seconds==null?"نامشخص":q.age_seconds+" ثانیه")+(q.is_proxy?" | قیمت آتی/Proxy":""):"تحلیل دریافت شد، اما قیمت زنده در دسترس نیست؛ قیمت کندل را قیمت لحظه‌ای فرض نکن."}catch(e){s.textContent="خطا: "+e.message}}
 async function backtest(){
  const out=document.getElementById("backtestout");out.innerHTML="در حال اجرای بک‌تست…";
  try{
@@ -83,5 +101,5 @@ async function correlations(){
 }
 async function scanner(){sstatus.textContent="در حال اسکن…";try{let d=await get("/api/scanner?market="+sm.value+"&timeframe="+st.value+"&limit=20");sresults.innerHTML=d.results.map(x=>'<div class="item"><b>'+x.symbol+"</b> — "+x.signal+" | جهت: "+(x.bias||"—")+" | امتیاز: "+(x.setup_score??"—")+"<br>"+(x.error||"قیمت زنده: "+(x.live_price==null?"ناموجود":fmt(x.live_price))+" | قیمت کندل تحلیل: "+fmt(x.analysis_price)+" | "+(x.quote_source||"منبع قیمت ناموجود")+" | سن: "+(x.quote_age_seconds==null?"—":x.quote_age_seconds+" ثانیه"))+"</div>").join("");sstatus.textContent="اسکن تمام شد؛ قیمت زنده از تیکر جدا از قیمت کندل تحلیلی است."}catch(e){sstatus.textContent="خطا: "+e.message}}
 async function ai(){aistatus.textContent="در حال پردازش…";if(!lastA&&!lastC){aistatus.textContent="اول تحلیل یا خبرها را دریافت کن";return}try{let d=await get("/api/ai-synthesis",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({technical:lastA,market_context:lastC,correlations:lastCorr})});aiout.textContent=d.analysis;aistatus.textContent="آماده شد"}catch(e){aistatus.textContent="خطا: "+e.message}}
-async function status(){try{let d=await get("/api/status");providers.textContent=Object.entries(d.providers).map(x=>x[0]+": "+x[1]).join(" | ")+" | معاملات واقعی: خاموش"}catch(e){providers.textContent="خطای اتصال: "+e.message}}symbols();status();
+async function status(){try{let d=await get("/api/status");providers.textContent=Object.entries(d.providers).map(x=>x[0]+": "+x[1]).join(" | ")+" | معاملات واقعی: خاموش"}catch(e){providers.textContent="خطای اتصال: "+e.message}}symbols();status();setInterval(refreshLiveQuote,5000);
 </script></body></html>
