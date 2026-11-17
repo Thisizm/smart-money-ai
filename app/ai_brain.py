@@ -8,6 +8,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+import time
 
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
@@ -69,6 +70,22 @@ def _gemini_request(model, api_key, body):
         return json.loads(response.read().decode("utf-8"))
 
 
+def _request_with_retry(model, api_key, body, attempts=3):
+    """Retry temporary Gemini capacity/server failures without changing evidence."""
+    for attempt in range(attempts):
+        try:
+            return _gemini_request(model, api_key, body)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (408, 500, 502, 503, 504) or attempt >= attempts - 1:
+                raise
+            retry_after = exc.headers.get("Retry-After") if exc.headers else None
+            try:
+                delay = min(8.0, max(0.5, float(retry_after)))
+            except (TypeError, ValueError):
+                delay = min(6.0, 1.5 * (2 ** attempt))
+            time.sleep(delay)
+
+
 def call_gemini(evidence):
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -84,26 +101,25 @@ def call_gemini(evidence):
     }).encode("utf-8")
     try:
         try:
-            data = _gemini_request(model, api_key, body)
+            data = _request_with_retry(model, api_key, body)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "ignore")[:500]
-            # A stale Render environment variable may still pin the retired 2.5 model.
-            # Retry once with the currently configured default; never mask quota errors.
+            # A stale Render environment variable may still pin an unavailable model.
             if exc.code == 404 and model != DEFAULT_GEMINI_MODEL:
                 model = DEFAULT_GEMINI_MODEL
-                data = _gemini_request(model, api_key, body)
+                data = _request_with_retry(model, api_key, body)
             else:
-                if exc.code == 429:
-                    raise RuntimeError("سهمیه رایگان Gemini موقتاً تمام شده یا محدودیت سرعت فعال است؛ بعداً دوباره تلاش کن. " + detail)
-                if exc.code == 404:
-                    raise RuntimeError("مدل Gemini در دسترس نیست: " + detail)
-                raise RuntimeError("خطای Gemini HTTP " + str(exc.code) + ": " + detail)
+                raise
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "ignore")[:500]
         if exc.code == 429:
-            raise RuntimeError("سهمیه رایگان Gemini موقتاً تمام شده یا محدودیت سرعت فعال است؛ بعداً دوباره تلاش کن. " + detail)
+            raise RuntimeError("محدودیت سهمیه یا سرعت Gemini فعال است؛ کمی بعد دوباره تلاش کن. " + detail)
+        if exc.code == 503:
+            raise RuntimeError("سرور Gemini پس از چند تلاش هنوز شلوغ است (503)؛ این خطا به‌تنهایی به معنی تمام‌شدن سهمیه نیست. چند دقیقه بعد دوباره تلاش کن. " + detail)
+        if exc.code in (500, 502, 504, 408):
+            raise RuntimeError("اختلال موقت در سرور Gemini پس از چند تلاش: HTTP " + str(exc.code) + ". بعداً دوباره تلاش کن. " + detail)
         if exc.code == 404:
-            raise RuntimeError("مدل Gemini جایگزین نیز در دسترس نیست: " + detail)
+            raise RuntimeError("مدل Gemini در دسترس نیست: " + detail)
         raise RuntimeError("خطای Gemini HTTP " + str(exc.code) + ": " + detail)
     candidates = data.get("candidates") or []
     chunks = []
