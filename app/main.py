@@ -933,7 +933,8 @@ def cot_positions(asset):
     if asset not in ("gold", "silver"):
         return {"available": False, "note": "COT برای این دارایی در این اتصال پشتیبانی نمی‌شود."}
     cached = COT_CACHE.get(asset)
-    if cached and time.time() - cached["at"] < 21600:
+    cache_ttl = 21600 if cached and cached["data"].get("available") else 900
+    if cached and time.time() - cached["at"] < cache_ttl:
         return cached["data"]
 
     commodity = "GOLD" if asset == "gold" else "SILVER"
