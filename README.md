@@ -39,6 +39,7 @@ A research dashboard for crypto, gold and silver. The application is a decision-
 | HISTORICAL_CANDLE_LIMIT | Binance Spot candle history target; default 1,500, max 3,000 |
 | BACKTEST_CANDLE_LIMIT | Production-engine backtest replay bars; default 500, max 1,000 |
 | SCANNER_MIN_QUOTE_VOLUME_USDT | Scanner minimum 24h quote volume; default 5,000,000 USDT |
+| MAX_ENTRY_SPREAD_BPS | Maximum allowed observable Binance Spot spread for a new entry; default 20 bps |
 | ALLOW_METAL_FUTURES_PROXY | Explicit opt-in for COMEX futures proxy when spot unavailable; default false |
 | COINGECKO_API_KEY | Optional CoinGecko API key |
 | WEBHOOK_TOKEN | Optional authenticated alert webhook |
