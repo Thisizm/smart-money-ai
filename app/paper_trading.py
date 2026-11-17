@@ -4,6 +4,7 @@ This module never submits orders to an exchange. It records simulated entries an
 tracks exits from fresh public quotes only.
 """
 import json
+import math
 import os
 import sqlite3
 import threading
@@ -55,7 +56,13 @@ def init_paper_db():
             realized_r REAL NOT NULL DEFAULT 0,
             realized_return_percent REAL NOT NULL DEFAULT 0,
             source TEXT,
-            note TEXT
+            note TEXT,
+            quantity REAL NOT NULL DEFAULT 0,
+            notional REAL NOT NULL DEFAULT 0,
+            margin_used REAL NOT NULL DEFAULT 0,
+            leverage REAL NOT NULL DEFAULT 1,
+            initial_balance REAL NOT NULL DEFAULT 10000,
+            risk_cash REAL NOT NULL DEFAULT 50
         )
         """)
         columns = {row["name"] for row in con.execute("PRAGMA table_info(paper_trades)")}
@@ -64,6 +71,14 @@ def init_paper_db():
                 con.execute("ALTER TABLE paper_trades ADD COLUMN " + name + " REAL")
         if "last_quote_at" not in columns:
             con.execute("ALTER TABLE paper_trades ADD COLUMN last_quote_at TEXT")
+        for name, declaration in (("quantity", "REAL NOT NULL DEFAULT 0"),
+                                  ("notional", "REAL NOT NULL DEFAULT 0"),
+                                  ("margin_used", "REAL NOT NULL DEFAULT 0"),
+                                  ("leverage", "REAL NOT NULL DEFAULT 1"),
+                                  ("initial_balance", "REAL NOT NULL DEFAULT 10000"),
+                                  ("risk_cash", "REAL NOT NULL DEFAULT 50")):
+            if name not in columns:
+                con.execute("ALTER TABLE paper_trades ADD COLUMN " + name + " " + declaration)
         con.execute("CREATE INDEX IF NOT EXISTS idx_paper_status ON paper_trades(status)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_paper_created ON paper_trades(created_at DESC)")
 
@@ -116,6 +131,17 @@ def record_signal(result):
         return {"recorded": False, "reason": "invalid_long_levels"}
     if side == "SHORT" and (targets[0] >= entry or entry_high >= stop):
         return {"recorded": False, "reason": "invalid_short_levels"}
+    # Virtual account: 10,000 USDT-equivalent, 0.5% risk, auto leverage <= 5x.
+    # This sizing is simulation only; no exchange order is submitted.
+    initial_balance = float(os.getenv("PAPER_INITIAL_BALANCE", "10000"))
+    risk_cash = initial_balance * 0.005
+    risk_per_unit = abs(entry - stop)
+    quantity = risk_cash / risk_per_unit
+    max_leverage = max(1.0, min(5.0, float(os.getenv("PAPER_MAX_LEVERAGE", "5"))))
+    quantity = min(quantity, initial_balance * max_leverage / max(entry, 1e-12))
+    notional = quantity * entry
+    leverage = min(max_leverage, max(1.0, float(math.ceil(notional / initial_balance))))
+    margin_used = notional / leverage
     touched = entry_low <= live_price <= entry_high
     status = "ACTIVE" if touched else "PENDING_ENTRY"
     filled_entry = live_price if touched else entry
@@ -126,9 +152,9 @@ def record_signal(result):
     with _LOCK, _connect() as con:
         cur = con.execute("""
             INSERT OR IGNORE INTO paper_trades
-            (fingerprint, created_at, updated_at, market, symbol, timeframe, side, signal_candle_time, entry_price, entry_low, entry_high, signal_entry, last_quote_price, last_quote_at, stop_loss, target_1, target_2, target_3, status, source, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (fingerprint, now, now, market, result.get("symbol", ""), result.get("timeframe", ""), side, candle_time, filled_entry, entry_low, entry_high, entry, live_price, now, stop, targets[0], targets[1], targets[2] if len(targets) > 2 else None, status, source, note))
+            (fingerprint, created_at, updated_at, market, symbol, timeframe, side, signal_candle_time, entry_price, entry_low, entry_high, signal_entry, last_quote_price, last_quote_at, stop_loss, target_1, target_2, target_3, status, source, note, quantity, notional, margin_used, leverage, initial_balance, risk_cash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (fingerprint, now, now, market, result.get("symbol", ""), result.get("timeframe", ""), side, candle_time, filled_entry, entry_low, entry_high, entry, live_price, now, stop, targets[0], targets[1], targets[2] if len(targets) > 2 else None, status, source, note, quantity, notional, margin_used, leverage, initial_balance, risk_cash))
         if cur.rowcount == 0:
             row = con.execute("SELECT id, status FROM paper_trades WHERE fingerprint=?", (fingerprint,)).fetchone()
             return {"recorded": False, "duplicate": True, "trade_id": row["id"], "status": row["status"]}
@@ -174,7 +200,15 @@ def monitor_open_trades(quote_getter):
                 touched = low <= price <= high or crossed_zone
                 with _LOCK, _connect() as con:
                     if touched:
-                        con.execute("UPDATE paper_trades SET status='ACTIVE', entry_price=?, last_quote_price=?, last_quote_at=?, updated_at=?, note=? WHERE id=?", (fill_price, price, _now(), _now(), "قیمت محدوده ورود را لمس/قطع کرد؛ معامله آزمایشی فعال شد.", row["id"]))
+                        fill_risk = abs(fill_price - float(row["stop_loss"]))
+                        balance = float(row["initial_balance"] or 10000)
+                        risk_cash = float(row["risk_cash"] or balance * 0.005)
+                        max_lev = max(1.0, min(5.0, float(os.getenv("PAPER_MAX_LEVERAGE", "5"))))
+                        qty = min(risk_cash / max(fill_risk, 1e-12), balance * max_lev / max(fill_price, 1e-12))
+                        notional = qty * fill_price
+                        leverage = min(max_lev, max(1.0, float(math.ceil(notional / balance))))
+                        margin = notional / leverage
+                        con.execute("UPDATE paper_trades SET status='ACTIVE', entry_price=?, quantity=?, notional=?, leverage=?, margin_used=?, last_quote_price=?, last_quote_at=?, updated_at=?, note=? WHERE id=?", (fill_price, qty, notional, leverage, margin, price, _now(), _now(), "قیمت محدوده ورود را لمس/قطع کرد؛ معامله آزمایشی فعال شد.", row["id"]))
                         updated += 1
                     else:
                         con.execute("UPDATE paper_trades SET last_quote_price=?, last_quote_at=?, updated_at=? WHERE id=?", (price, _now(), _now(), row["id"]))
@@ -262,8 +296,25 @@ def list_paper_trades(limit=100):
             SELECT realized_r FROM paper_trades
             WHERE status IN ('TP2_HIT','SL_HIT','SL_AFTER_TP1')
         """).fetchall()
+    for row in rows:
+        entry = float(row.get("entry_price") or 0)
+        quantity = float(row.get("quantity") or 0)
+        margin = float(row.get("margin_used") or 0)
+        price = float(row.get("last_quote_price") or entry)
+        side_sign = 1 if row.get("side") == "LONG" else -1
+        remaining_fraction = 0.5 if row.get("status") == "TP1_HIT" else (1.0 if row.get("status") == "ACTIVE" else 0.0)
+        unrealized = side_sign * (price - entry) * quantity * remaining_fraction
+        realized_cash = float(row.get("realized_return_percent") or 0) / 100.0 * float(row.get("notional") or 0)
+        total_pnl = realized_cash + unrealized
+        row["unrealized_pnl"] = round(unrealized, 4)
+        row["realized_pnl"] = round(realized_cash, 4)
+        row["total_pnl"] = round(total_pnl, 4)
+        row["return_on_margin_percent"] = round(total_pnl / margin * 100.0, 3) if margin > 0 else 0.0
+        row["remaining_fraction"] = remaining_fraction
     closed_r = [float(r["realized_r"] or 0) for r in closed_rows]
     wins = sum(1 for x in closed_r if x > 0)
+    open_pnl = round(sum(float(row.get("total_pnl") or 0) for row in rows
+                         if row.get("status") in ("ACTIVE", "TP1_HIT")), 4)
     return {
         "available": True, "mode": "PAPER_ONLY",
         "stats": {
@@ -273,6 +324,10 @@ def list_paper_trades(limit=100):
             "stopped": int(stats["stopped"] or 0), "closed": len(closed_r),
             "win_rate_percent": round(wins / len(closed_r) * 100, 2) if closed_r else None,
             "net_r": round(sum(closed_r), 3),
+            "open_pnl": open_pnl,
+            "virtual_balance_per_trade": float(os.getenv("PAPER_INITIAL_BALANCE", "10000")),
+            "risk_per_trade_percent": 0.5,
+            "max_leverage": max(1.0, min(5.0, float(os.getenv("PAPER_MAX_LEVERAGE", "5")))),
         },
         "trades": rows
     }

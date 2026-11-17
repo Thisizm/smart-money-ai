@@ -175,6 +175,62 @@ def _session_levels(candles):
     return result
 
 
+
+def _detect_divergences(candles, rsi_values, lookback=120):
+    """Detect confirmed regular/hidden RSI divergences from two-sided pivots.
+
+    A pivot is only emitted after two candles to its right have closed, avoiding
+    a repainting signal. The returned time is the actual pivot candle time.
+    """
+    start = max(2, len(candles) - lookback)
+    highs, lows = [], []
+    for i in range(start, len(candles) - 2):
+        if rsi_values[i] is None:
+            continue
+        if (candles[i]["high"] > max(x["high"] for x in candles[i-2:i])
+                and candles[i]["high"] >= max(x["high"] for x in candles[i+1:i+3])):
+            highs.append({"index": i, "price": float(candles[i]["high"]), "rsi": float(rsi_values[i])})
+        if (candles[i]["low"] < min(x["low"] for x in candles[i-2:i])
+                and candles[i]["low"] <= min(x["low"] for x in candles[i+1:i+3])):
+            lows.append({"index": i, "price": float(candles[i]["low"]), "rsi": float(rsi_values[i])})
+
+    found = []
+    for pivots, kind in ((lows, "low"), (highs, "high")):
+        if len(pivots) < 2:
+            continue
+        previous, current = pivots[-2], pivots[-1]
+        gap = current["index"] - previous["index"]
+        if gap < 5 or gap > 60:
+            continue
+        if kind == "low":
+            if current["price"] < previous["price"] and current["rsi"] > previous["rsi"]:
+                label, direction = "regular_bullish", "bullish"
+            elif current["price"] > previous["price"] and current["rsi"] < previous["rsi"]:
+                label, direction = "hidden_bullish", "bullish"
+            else:
+                continue
+        else:
+            if current["price"] > previous["price"] and current["rsi"] < previous["rsi"]:
+                label, direction = "regular_bearish", "bearish"
+            elif current["price"] < previous["price"] and current["rsi"] > previous["rsi"]:
+                label, direction = "hidden_bearish", "bearish"
+            else:
+                continue
+        found.append({
+            "type": label, "direction": direction, "pivot_kind": kind,
+            "time": int(candles[current["index"]]["time"]),
+            "previous_time": int(candles[previous["index"]]["time"]),
+            "price": round(current["price"], 10),
+            "rsi": round(current["rsi"], 2),
+            "previous_price": round(previous["price"], 10),
+            "previous_rsi": round(previous["rsi"], 2),
+            "confirmation_after_bars": 2,
+            "confirmed": True
+        })
+    return {"available": bool(found), "signals": found[-4:],
+            "note": "واگرایی فقط روی پیوت تأییدشده با دو کندل بسته‌شده سمت راست محاسبه می‌شود؛ واگرایی به‌تنهایی سیگنال ورود نیست."}
+
+
 def advanced_analysis(candles, timeframe):
     closes = [c["close"] for c in candles]
     highs = [c["high"] for c in candles]
@@ -281,6 +337,8 @@ def advanced_analysis(candles, timeframe):
             hi, lo, leg = ph["price"], pl["price"], "downswing"
             fib = {"available": True, "leg": leg, "0.382": lo + (hi - lo) * 0.382, "0.5": lo + (hi - lo) * 0.5, "0.618": lo + (hi - lo) * 0.618, "0.786": lo + (hi - lo) * 0.786}
 
+    rsi_series = _rsi_wilder_series(closes, 14)
+    divergences = _detect_divergences(candles, rsi_series)
     volume_profile = _volume_profile(candles)
     session = _session_levels(candles)
     timeframe_ms = {"5m": 300000, "15m": 900000, "1h": 3600000, "4h": 14400000, "1d": 86400000, "1w": 604800000}.get(timeframe, 0)
@@ -291,7 +349,8 @@ def advanced_analysis(candles, timeframe):
 
     return {
         "rsi_wilder_14": round(rsi, 2),
-        "rsi_series": _rsi_wilder_series(closes, 14),
+        "rsi_series": rsi_series,
+        "divergences": divergences,
         "macd": {"line": macd_line, "signal": macd_signal, "histogram": macd_hist, "bias": "bullish" if macd_hist > 0 else "bearish" if macd_hist < 0 else "neutral"},
         "adx": {"value": round(adx, 2), "plus_di": round(plus_di, 2), "minus_di": round(minus_di, 2), "regime": regime},
         "volatility": {"atr": atr, "atr_percent": round(atr_pct, 4), "bollinger_upper": bb_upper, "bollinger_mid": bb_mid, "bollinger_lower": bb_lower, "bollinger_width_percent": round(bb_width, 4), "bollinger_width_percentile": round(width_rank * 100, 1), "squeeze": squeeze},
