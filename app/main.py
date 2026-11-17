@@ -1494,6 +1494,9 @@ def build_liquidation_context(result, heatmap, current_price):
         elif result.get("signal") == "SELL":
             result["bear_score"] = min(100, int(result.get("bear_score", 0)) + adjustment)
         result["setup_score"] = max(int(result.get("bull_score", 0)), int(result.get("bear_score", 0)))
+        bull_score = int(result.get("bull_score", 0))
+        bear_score = int(result.get("bear_score", 0))
+        result["bias"] = "صعودی" if bull_score - bear_score >= 6 else "نزولی" if bear_score - bull_score >= 6 else "خنثی"
         if isinstance(result.get("analysis"), list):
             result["analysis"].append(reason)
 
