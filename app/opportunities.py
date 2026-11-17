@@ -35,8 +35,8 @@ def _levels(candles, side, price):
 
 
 def _serialize_candidate(market, symbol, daily_candles, daily, four_hour, quote, event_risk):
-    side = "long" if daily.get("signal") == "BUY" else "short" if daily.get("signal") == "SELL" else None
-    four_side = "long" if four_hour.get("signal") == "BUY" else "short" if four_hour.get("signal") == "SELL" else None
+    side = "long" if daily.get("signal") == "BUY" or (daily.get("signal") == "WAIT" and daily.get("bias") == "صعودی") else "short" if daily.get("signal") == "SELL" or (daily.get("signal") == "WAIT" and daily.get("bias") == "نزولی") else None
+    four_side = "long" if four_hour.get("signal") == "BUY" or (four_hour.get("signal") == "WAIT" and four_hour.get("bias") == "صعودی") else "short" if four_hour.get("signal") == "SELL" or (four_hour.get("signal") == "WAIT" and four_hour.get("bias") == "نزولی") else None
     plan = ((daily.get("smart_entry") or {}).get(side) if side else None) or {}
     quote_age = quote.get("age_seconds")
     fresh = bool(quote.get("available") and not quote.get("is_proxy") and quote_age is not None
@@ -61,12 +61,20 @@ def _serialize_candidate(market, symbol, daily_candles, daily, four_hour, quote,
                      and plan.get("available") and inside_zone and not_invalidated
                      and plan.get("reaction_confirmed") and plan.get("risk_gate_passed"))
     watch = bool(side and strategy_ok and risk_ok and aligned and not_invalidated)
+    score_hint = max(float(daily.get("bull_score") or 0), float(daily.get("bear_score") or 0), float(daily.get("setup_score") or 0))
+    bias_aligned = bool(side and four_side == side)
     if confirmed:
         state = "CONFIRMED_SETUP"
         label = "ستاپ تأییدشده؛ بررسی ورود"
     elif watch:
         state = "WAITING_FOR_TRIGGER"
         label = "در انتظار تریگر / رسیدن قیمت به ناحیه"
+    elif side and bias_aligned and score_hint >= 35:
+        state = "DEVELOPING"
+        label = "فرصت در حال شکل‌گیری؛ هنوز ورود تأیید نشده"
+    elif side and score_hint >= 45:
+        state = "WATCHLIST"
+        label = "زیر نظر؛ جهت‌ها هنوز همسو نیستند"
     else:
         state = "NO_TRADE"
         label = "فعلاً بدون ورود معتبر"
@@ -74,7 +82,7 @@ def _serialize_candidate(market, symbol, daily_candles, daily, four_hour, quote,
     structural_targets = _levels(daily_candles, side, float(daily.get("price") or 0)) if side else []
     checks = (daily.get("strategy_plan") or {}).get("checks") or []
     quality = 0
-    quality += 25 if strategy_ok else 0
+    quality += int(min(25, score_hint * 0.25))
     quality += 20 if aligned else 0
     quality += 15 if risk_ok else 0
     quality += 15 if fresh else 0
@@ -101,6 +109,8 @@ def _serialize_candidate(market, symbol, daily_candles, daily, four_hour, quote,
         "market": market, "symbol": symbol, "side": side, "state": state, "state_label": label,
         "quality_score": quality, "score_is_probability": False,
         "daily_signal": daily.get("signal"), "four_hour_signal": four_hour.get("signal"),
+        "daily_bias": daily.get("bias"), "four_hour_bias": four_hour.get("bias"),
+        "setup_score": daily.get("setup_score"), "bull_score": daily.get("bull_score"), "bear_score": daily.get("bear_score"),
         "daily_bias": daily.get("bias"), "four_hour_bias": four_hour.get("bias"),
         "price": live_price if live_price is not None else daily.get("price"),
         "analysis_price": daily.get("price"), "quote": quote,
@@ -180,7 +190,7 @@ def opportunities(market: str = "all", limit: int = 12, refresh: bool = False):
 
     # Confirmed first, then watch candidates. NO_TRADE rows remain visible but
     # are ranked below actual setups so the scanner never hides a failed gate.
-    order = {"CONFIRMED_SETUP": 0, "WAITING_FOR_TRIGGER": 1, "NO_TRADE": 2}
+    order = {"CONFIRMED_SETUP": 0, "WAITING_FOR_TRIGGER": 1, "DEVELOPING": 2, "WATCHLIST": 3, "NO_TRADE": 4}
     results.sort(key=lambda x: (order.get(x["state"], 3), -x["quality_score"]))
     payload = {
         "market": market, "results": results, "errors": errors, "universe": universe,
