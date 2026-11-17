@@ -6,7 +6,7 @@
 </style></head><body><header><div class="wrap"><h1>SMART MONEY AI</h1><div class="muted">تحلیل کریپتو، طلا و نقره | نسخه آزمایشی توسعه‌یافته</div></div></header>
 <main class="wrap">
 <div class="tabs"><button class="tab" data-id="analysis">تحلیل</button><button class="tab" data-id="dominance">دامیننس</button><button class="tab" data-id="context">اخبار و اقتصاد</button><button class="tab" data-id="scanner">اسکنر</button><button class="tab" data-id="ai">AI</button></div>
-<section id="analysis"><div class="panel"><div class="row"><div class="field"><label>بازار</label><select id="market" onchange="symbols()"><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div><div class="field"><label>نماد</label><select id="symbol"></select><div id="coin-count" class="small"></div></div><div class="field"><label>تایم‌فریم</label><select id="tf"><option>5m</option><option selected>15m</option><option>1h</option><option>4h</option><option>1d</option><option>1w</option></select></div></div><div class="row" style="margin-top:10px"><button onclick="analyze()">تحلیل تکنیکال</button><button onclick="mtf()">چندتایم‌فریمی</button><button onclick="backtest()">بک‌تست تاریخی</button></div><div id="astatus" class="muted"></div></div><div id="ares" class="panel" hidden><h3 id="signal"></h3><div class="chart-panel"><div class="chart-head"><b>نمودار قیمت و پلن معامله</b><span id="chart-source" class="small"></span></div><div class="chart-controls"><label><input id="overlay-ob" type="checkbox" checked onchange="renderChart(lastA)"> Order Block فعال</label><label><input id="overlay-fvg" type="checkbox" onchange="renderChart(lastA)"> FVG</label><label><input id="overlay-structure" type="checkbox" onchange="renderChart(lastA)"> حمایت و مقاومت</label></div><div id="price-chart"></div><div id="chart-levels-legend" class="chart-legend"></div><div class="rsi-caption"><b>RSI وایلدر ۱۴</b><span id="rsi-current" class="small">پس از تحلیل نمایش داده می‌شود</span></div><div id="rsi-chart"></div><div class="small chart-note">برای جلوگیری از شلوغی، سطوح اصلی روی نمودار می‌مانند؛ موارد اختیاری را از کنترل‌های بالا روشن کن. RSI در پنل مستقل با خطوط ۳۰، ۵۰ و ۷۰ نمایش داده می‌شود.</div></div><div class="chart-panel heatmap-panel" id="liq-panel" hidden><div class="chart-head"><b>نقشه نقدینگی و لیکوییدیشن CoinGlass</b><span id="liq-source" class="small"></span></div><canvas id="liq-heatmap"></canvas><div id="liq-heatmap-note" class="small chart-note">در حال بررسی دسترسی CoinGlass…</div><div id="liq-clusters" class="heatmap-clusters"></div></div><div class="item"><h3>تحلیل موقعیت و سناریوها</h3><div id="scenario-analysis">پس از تحلیل، وضعیت قیمت و شروط شکست نمایش داده می‌شود.</div></div><div id="metrics" class="metrics"></div><div id="livequote" class="item">پس از تحلیل، نمایش قیمت هر ۵ ثانیه تازه‌سازی می‌شود؛ دریافت مجدد قیمت فلزات برای رعایت محدودیت API حداکثر هر ۳۰ ثانیه انجام می‌شود.</div><ul id="reasons"></ul><div id="mtfout"></div><div id="prodetails"></div><div id="backtestout"></div><p class="small">امتیاز تجربی احتمال موفقیت نیست. پروفایل حجم، سطوح نقدینگی و Order Block از OHLCV عمومی تقریب زده می‌شوند و داده نهادی یا تیک‌به‌تیک نیستند.</p></div></section>
+<section id="analysis"><div class="panel"><div class="row"><div class="field"><label>بازار</label><select id="market" onchange="symbols()"><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div><div class="field"><label>نماد</label><select id="symbol"></select><div id="coin-count" class="small"></div></div><div class="field"><label>تایم‌فریم</label><select id="tf"><option>5m</option><option selected>15m</option><option>1h</option><option>4h</option><option>1d</option><option>1w</option></select></div></div><div class="row" style="margin-top:10px"><button onclick="analyze()">تحلیل تکنیکال</button><button onclick="mtf()">چندتایم‌فریمی</button><button onclick="backtest()">بک‌تست تاریخی</button></div><div id="astatus" class="muted"></div></div><div id="ares" class="panel" hidden><h3 id="signal"></h3><div class="chart-panel"><div class="chart-head"><b>نمودار قیمت و پلن معامله</b><span id="chart-source" class="small"></span></div><div class="chart-controls"><label><input id="overlay-ob" type="checkbox" checked onchange="renderChart(lastA)"> Order Block فعال</label><label><input id="overlay-fvg" type="checkbox" onchange="renderChart(lastA)"> FVG</label><label><input id="overlay-structure" type="checkbox" onchange="renderChart(lastA)"> حمایت و مقاومت</label></div><div id="price-chart"></div><div id="chart-levels-legend" class="chart-legend"></div><div class="rsi-caption"><b>RSI وایلدر ۱۴</b><span id="rsi-current" class="small">پس از تحلیل نمایش داده می‌شود</span></div><div id="rsi-chart"></div><div class="small chart-note">برای جلوگیری از شلوغی، سطوح اصلی روی نمودار می‌مانند؛ موارد اختیاری را از کنترل‌های بالا روشن کن. RSI در پنل مستقل با خطوط ۳۰، ۵۰ و ۷۰ نمایش داده می‌شود.</div></div><div class="chart-panel heatmap-panel" id="liq-panel" hidden><div class="chart-head"><b>نقشه نقدینگی و لیکوییدیشن MarginPad</b><span id="liq-source" class="small"></span></div><canvas id="liq-heatmap"></canvas><div id="liq-heatmap-note" class="small chart-note">در حال بررسی دسترسی MarginPad…</div><div id="liq-clusters" class="heatmap-clusters"></div></div><div class="item"><h3>تحلیل موقعیت و سناریوها</h3><div id="scenario-analysis">پس از تحلیل، وضعیت قیمت و شروط شکست نمایش داده می‌شود.</div></div><div id="metrics" class="metrics"></div><div id="livequote" class="item">پس از تحلیل، نمایش قیمت هر ۵ ثانیه تازه‌سازی می‌شود؛ دریافت مجدد قیمت فلزات برای رعایت محدودیت API حداکثر هر ۳۰ ثانیه انجام می‌شود.</div><ul id="reasons"></ul><div id="mtfout"></div><div id="prodetails"></div><div id="backtestout"></div><p class="small">امتیاز تجربی احتمال موفقیت نیست. پروفایل حجم، سطوح نقدینگی و Order Block از OHLCV عمومی تقریب زده می‌شوند و داده نهادی یا تیک‌به‌تیک نیستند.</p></div></section>
 <section id="dominance" hidden><div class="panel"><h3>دامیننس بازار</h3><button onclick="dominance()">به‌روزرسانی</button><div id="dstatus" class="muted"></div><div id="dmetrics" class="metrics"></div><div id="dnote" class="small"></div></div></section>
 <section id="context" hidden><div class="panel"><h3>اخبار و عوامل اثرگذار</h3><div class="row"><div class="field"><label>دارایی</label><select id="asset"><option value="gold">طلا</option><option value="silver">نقره</option><option value="crypto">کریپتو</option></select></div><button onclick="context()">دریافت اخبار و اقتصاد</button><button onclick="correlations()">همبستگی بازارها</button></div><div id="corrout"></div><div id="cstatus" class="muted"></div><div id="factors"></div><h3>موقعیت‌گیری هفتگی COT طلا/نقره</h3><div id="cot"></div><h3>اخبار</h3><div id="news"></div><h3>شاخص‌های اقتصاد آمریکا</h3><div id="macro"></div></div></section>
 <section id="scanner" hidden><div class="panel"><h3>اسکنر بازار</h3><div class="row"><div class="field"><label>بازار</label><select id="sm"><option value="all">همه</option><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div><div class="field"><label>تایم‌فریم</label><select id="st"><option>15m</option><option>1h</option><option>4h</option><option>1d</option></select></div></div><button onclick="scanner()" style="margin-top:10px">شروع اسکن</button><div id="sstatus" class="muted"></div><div id="sresults"></div></div></section>
@@ -39,7 +39,7 @@ function renderScenario(d){
   "فیلتر و تأیید: "+(a.risk||"—")
  ];
  const liq=d.liquidation_context||{};
- if(liq.available)lines.push("CoinGlass: "+(liq.note||"نقشه نقدینگی به‌عنوان تأیید کم‌وزن بررسی شد."));
+ if(liq.available)lines.push("MarginPad: "+(liq.note||"نقشه نقدینگی به‌عنوان تأیید کم‌وزن بررسی شد."));
 
  if(d.signal==="BUY"||d.signal==="SELL"){
   lines.push("پلن معامله: ورود مرجع "+fmt(p.entry)+" | حد ضرر "+fmt(p.stop_loss)+" | اهداف "+(p.targets||[]).map(fmt).join(" / "));
@@ -55,62 +55,68 @@ function renderLiquidationHeatmap(data,currentPrice){
  const panel=document.getElementById("liq-panel"),canvas=document.getElementById("liq-heatmap"),note=document.getElementById("liq-heatmap-note"),source=document.getElementById("liq-source"),clustersEl=document.getElementById("liq-clusters");
  if(heatmapResizeObserver){heatmapResizeObserver.disconnect();heatmapResizeObserver=null}
  if(currentAnalysisMarket!=="crypto"){panel.hidden=true;return}
- panel.hidden=false
- if(!data||!data.available||!Array.isArray(data.liquidation_leverage_data)||!data.liquidation_leverage_data.length){
-  canvas.hidden=true;source.textContent="CoinGlass";
-  note.textContent=(data&&data.note)||"نقشه لیکوییدیشن در دسترس نیست.";
+ panel.hidden=false;
+ const clusters=(data&&(data.model_clusters||data.clusters))||[],events=(data&&data.events)||[];
+ if(!data||!data.available||(!clusters.length&&!events.length)){
+  canvas.hidden=true;source.textContent="MarginPad";
+  note.textContent=(data&&data.note)||"داده لیکوییدیشن در دسترس نیست.";
   clustersEl.innerHTML="";
   return;
  }
  canvas.hidden=false;
- source.textContent=(data.source||"CoinGlass")+" | "+(data.symbol||"")+" | "+(data.range||"24h");
- note.textContent=(data.note||"")+" نقشه مدل‌محور است و جهت قیمت را تضمین نمی‌کند.";
+ source.textContent=(data.source||"MarginPad")+" | "+(data.symbol||"")+" | "+(data.updated_at||"زمان نامشخص")+(data.stale?" | داده ذخیره‌شده":"");
+ note.textContent=(data.note||"")+" نوارها = خوشه تخمینی؛ نقطه‌ها = رویداد واقعی گزارش‌شده.";
  const draw=()=>{
   const width=Math.max(280,canvas.clientWidth||300),height=Math.max(160,canvas.clientHeight||250),ratio=window.devicePixelRatio||1;
   canvas.width=Math.floor(width*ratio);canvas.height=Math.floor(height*ratio);
   const ctx=canvas.getContext("2d");ctx.setTransform(ratio,0,0,ratio,0,0);
   ctx.clearRect(0,0,width,height);
-  const axis=(data.y_axis||[]).map(Number),rows=data.liquidation_leverage_data||[];
-  if(!axis.length||!rows.length)return;
-  const minP=Math.min(...axis),maxP=Math.max(...axis),span=maxP-minP;
-  if(!Number.isFinite(span)||span<=0)return;
-  let maxX=1,maxV=1;
-  for(const row of rows){maxX=Math.max(maxX,Number(row[0])||0);maxV=Math.max(maxV,Number(row[2])||0)}
-  const cellW=Math.max(1,width/(maxX+1)),cellH=Math.max(1,height/axis.length);
-  const yFor=price=>height-(price-minP)/span*height;
-  for(const row of rows){
-   const xIndex=Number(row[0]),yIndex=Number(row[1]),value=Number(row[2]);
-   const price=axis[yIndex];
-   if(!Number.isFinite(xIndex)||!Number.isFinite(price)||!Number.isFinite(value)||value<=0)continue;
-   const intensity=Math.min(1,Math.log1p(value)/Math.log1p(maxV));
-   const y=yFor(price);
-   ctx.fillStyle="rgba(255, "+Math.round(80+110*(1-intensity))+", 75, "+(0.12+0.78*intensity)+")";
-   ctx.fillRect(xIndex*cellW,y-cellH/2,cellW+1,cellH+1);
-  }
-  const bars=data.price_candlesticks||[];
-  if(bars.length>1){
-   ctx.beginPath();ctx.strokeStyle="rgba(225,238,255,.9)";ctx.lineWidth=1.2;
-   let started=false;
-   bars.forEach((bar,index)=>{
-    const close=Number(bar[4]),x=index/(bars.length-1)*width,y=yFor(close);
-    if(!Number.isFinite(close))return;
-    if(!started){ctx.moveTo(x,y);started=true}else ctx.lineTo(x,y);
-   });
-   if(started)ctx.stroke();
-  }
-  if(Number.isFinite(Number(currentPrice))&&Number(currentPrice)>=minP&&Number(currentPrice)<=maxP){
-   const y=yFor(Number(currentPrice));ctx.save();ctx.setLineDash([5,4]);ctx.strokeStyle="#7dd3fc";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(width,y);ctx.stroke();ctx.restore();
+  const prices=[];
+  clusters.forEach(x=>{const p=Number(x.price);if(Number.isFinite(p)&&p>0)prices.push(p)});
+  events.forEach(x=>{const p=Number(x.price);if(Number.isFinite(p)&&p>0)prices.push(p)});
+  if(!prices.length)return;
+  let minP=Math.min(...prices),maxP=Math.max(...prices);
+  if(maxP<=minP){minP*=0.999;maxP*=1.001}
+  const span=maxP-minP,yFor=price=>height-(price-minP)/span*height;
+  const maxCluster=Math.max(1,...clusters.map(x=>Number(x.est_notional)||0));
+  clusters.forEach(item=>{
+   const price=Number(item.price),notional=Number(item.est_notional)||0;
+   if(!Number.isFinite(price))return;
+   const intensity=Math.min(1,notional/maxCluster),bandW=Math.max(18,width*(0.18+0.78*intensity)),y=yFor(price);
+   const isShort=item.side==="short",color=isShort?"40,201,151":"255,113,130";
+   ctx.fillStyle="rgba("+color+","+(0.16+0.62*intensity)+")";
+   ctx.fillRect((width-bandW)/2,y-3.5,bandW,7);
+   ctx.fillStyle="rgba(235,242,255,.9)";ctx.font="10px Arial";
+   ctx.fillText((isShort?"Short":"Long")+" est. "+fmt(price),8,Math.max(11,Math.min(height-3,y-5)));
+  });
+  const maxEvent=Math.max(1,...events.map(x=>Number(x.notional)||0));
+  events.forEach((item,index)=>{
+   const price=Number(item.price),notional=Number(item.notional)||0;
+   if(!Number.isFinite(price))return;
+   const x=events.length>1?((index+1)/(events.length+1))*width:width/2,y=yFor(price);
+   const radius=2+Math.min(4,Math.log1p(notional)/Math.log1p(maxEvent)*4);
+   ctx.beginPath();ctx.arc(x,y,radius,0,Math.PI*2);
+   ctx.fillStyle=item.side_class==="short"?"#28c997":item.side_class==="long"?"#ff7182":"#d7e3f7";
+   ctx.fill();
+  });
+  const cp=Number(currentPrice);
+  if(Number.isFinite(cp)&&cp>=minP&&cp<=maxP){
+   const y=yFor(cp);ctx.save();ctx.setLineDash([5,4]);ctx.strokeStyle="#7dd3fc";ctx.lineWidth=1.5;
+   ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(width,y);ctx.stroke();ctx.restore();
    ctx.fillStyle="#7dd3fc";ctx.font="11px Tahoma";ctx.fillText("قیمت فعلی",8,Math.max(12,y-5));
   }
   ctx.fillStyle="rgba(220,232,250,.8)";ctx.font="10px Arial";
-  for(let n=0;n<=4;n++){const p=maxP-(span*n/4);const y=height*n/4;ctx.fillText(p.toLocaleString("en-US",{maximumFractionDigits:2}),width-90,y+11)}
+  for(let n=0;n<=4;n++){const p=maxP-(span*n/4),y=height*n/4;ctx.fillText(p.toLocaleString("en-US",{maximumFractionDigits:2}),width-90,y+11)}
  };
  draw();
  if(typeof ResizeObserver!=="undefined"){heatmapResizeObserver=new ResizeObserver(draw);heatmapResizeObserver.observe(canvas.parentElement)}
- const lc=(lastA&&lastA.liquidation_context)||{},above=lc.nearest_above,below=lc.nearest_below;
+ const lc=(lastA&&lastA.liquidation_context)||{},above=lc.nearest_above,below=lc.nearest_below,summary=data.event_summary||{};
+ const usd=v=>v==null?"—":fmt(v)+" USD";
  clustersEl.innerHTML=
-  '<div class="heatmap-cluster"><b>نزدیک‌ترین خوشه بالای قیمت</b><br>'+(above?fmt(above.price)+" | شدت نسبی "+fmt(above.relative_intensity):"داده‌ای موجود نیست")+'</div>'+
-  '<div class="heatmap-cluster"><b>نزدیک‌ترین خوشه زیر قیمت</b><br>'+(below?fmt(below.price)+" | شدت نسبی "+fmt(below.relative_intensity):"داده‌ای موجود نیست")+'</div>';
+  '<div class="heatmap-cluster"><b>خوشه تخمینی بالای قیمت</b><br>'+(above?fmt(above.price)+" | سمت: "+(above.side||"نامشخص")+" | ارزش تخمینی: "+usd(above.est_notional):"داده‌ای موجود نیست")+'</div>'+
+  '<div class="heatmap-cluster"><b>خوشه تخمینی زیر قیمت</b><br>'+(below?fmt(below.price)+" | سمت: "+(below.side||"نامشخص")+" | ارزش تخمینی: "+usd(below.est_notional):"داده‌ای موجود نیست")+'</div>'+
+  '<div class="heatmap-cluster"><b>لیکوییدیشن واقعی لانگ</b><br>'+fmt(summary.long_liquidated_count||0)+" رویداد | "+usd(summary.long_liquidated_notional)+'</div>'+
+  '<div class="heatmap-cluster"><b>لیکوییدیشن واقعی شورت</b><br>'+fmt(summary.short_liquidated_count||0)+" رویداد | "+usd(summary.short_liquidated_notional)+'</div>';
 }
 function renderChart(d){
  if(!d)return;
@@ -244,7 +250,7 @@ function showA(d){
  details.push('<div class="item">سقف‌های برابر: '+fmt(liq.equal_highs_pool)+' | کف‌های برابر: '+fmt(liq.equal_lows_pool)+' | سطح تعادل: '+fmt(pd.equilibrium)+'</div>');
  details.push('<div class="item">Order Block: '+(ob.type||"تأیید نشد")+' | محدوده: '+(ob.low==null?"—":fmt(ob.low)+" تا "+fmt(ob.high))+' | فاصله: '+(ob.distance_atr==null?"—":fmt(ob.distance_atr)+" ATR")+' | وضعیت: '+(ob.mitigated==null?"—":ob.mitigated?"برگشت/مصرف شده":"هنوز تست نشده")+' | تأثیر امتیازی: '+fmt(ob.score_adjustment||0)+'</div>');
  const lc=d.liquidation_context||{},hm=d.liquidation_heatmap||{};
- details.push('<div class="item">CoinGlass Liquidation Map: '+(hm.available?"فعال | "+(hm.range||"24h"):"در دسترس نیست")+' | خوشه بالایی: '+(lc.nearest_above?fmt(lc.nearest_above.price):"—")+' | خوشه پایینی: '+(lc.nearest_below?fmt(lc.nearest_below.price):"—")+' | تعدیل امتیاز: '+fmt(lc.score_adjustment||0)+'</div>');
+ details.push('<div class="item">MarginPad: '+(hm.available?"فعال":"در دسترس نیست")+' | خوشه تخمینی بالا: '+(lc.nearest_above?fmt(lc.nearest_above.price):"—")+' | خوشه تخمینی پایین: '+(lc.nearest_below?fmt(lc.nearest_below.price):"—")+' | رویدادهای واقعی: '+fmt(lc.event_count||hm.event_count||0)+' | تعدیل امتیاز: '+fmt(lc.score_adjustment||0)+'</div>');
  details.push('<div class="small">'+(lc.note||hm.note||"")+"</div>");
  details.push('<div class="item">Volume Profile — POC: '+(vp.available?fmt(vp.poc):"ناموجود")+' | VAL: '+(vp.available?fmt(vp.value_area_low):"ناموجود")+' | VAH: '+(vp.available?fmt(vp.value_area_high):"ناموجود")+'</div>');
  const fib=a.fibonacci||{};
