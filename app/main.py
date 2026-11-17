@@ -2348,6 +2348,14 @@ def scanner(market: str = "all", timeframe: str = "15m", limit: int = 10):
             try:
                 result = analyze(future.result(), m, s, timeframe)
                 quote = get_live_quote(m, s)
+                result["live_quote"] = quote
+                quote_age = quote.get("age_seconds")
+                quote_fresh = bool(quote.get("available") and not quote.get("is_proxy")
+                                   and quote_age is not None
+                                   and quote_age <= (60 if m == "crypto" else 900))
+                result["execution_quality"] = {"blocked": not quote_fresh}
+                result["economic_event_risk"] = economic_event_risk(m)
+                result["paper_trade"] = record_signal(result)
                 results.append({
                     "market": m, "symbol": s, "signal": result["signal"],
                     "setup_score": result["setup_score"], "price": result["price"],
