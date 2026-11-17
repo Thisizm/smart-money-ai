@@ -38,6 +38,9 @@ function renderScenario(d){
   (d.signal==="WAIT"?"سناریوی نزولی مشروط: ":"")+ (a.bearish||""),
   "فیلتر و تأیید: "+(a.risk||"—")
  ];
+ const liq=d.liquidation_context||{};
+ if(liq.available)lines.push("CoinGlass: "+(liq.note||"نقشه نقدینگی به‌عنوان تأیید کم‌وزن بررسی شد."));
+
  if(d.signal==="BUY"||d.signal==="SELL"){
   lines.push("پلن معامله: ورود مرجع "+fmt(p.entry)+" | حد ضرر "+fmt(p.stop_loss)+" | اهداف "+(p.targets||[]).map(fmt).join(" / "));
   lines.push("مبنای ورود: "+(p.entry_basis||"آخرین کندل بسته‌شده"));
@@ -48,82 +51,174 @@ function renderScenario(d){
  }
  el.textContent=lines.filter(Boolean).join("\n\n");
 }
+function renderLiquidationHeatmap(data,currentPrice){
+ const panel=document.getElementById("liq-panel"),canvas=document.getElementById("liq-heatmap"),note=document.getElementById("liq-heatmap-note"),source=document.getElementById("liq-source"),clustersEl=document.getElementById("liq-clusters");
+ if(currentAnalysisMarket!=="crypto"){panel.hidden=true;return}
+ panel.hidden=false;
+ if(heatmapResizeObserver){heatmapResizeObserver.disconnect();heatmapResizeObserver=null}
+ if(!data||!data.available||!Array.isArray(data.liquidation_leverage_data)||!data.liquidation_leverage_data.length){
+  canvas.hidden=true;source.textContent="CoinGlass";
+  note.textContent=(data&&data.note)||"نقشه لیکوییدیشن در دسترس نیست.";
+  clustersEl.innerHTML="";
+  return;
+ }
+ canvas.hidden=false;
+ source.textContent=(data.source||"CoinGlass")+" | "+(data.symbol||"")+" | "+(data.range||"24h");
+ note.textContent=(data.note||"")+" نقشه مدل‌محور است و جهت قیمت را تضمین نمی‌کند.";
+ const draw=()=>{
+  const width=Math.max(280,canvas.clientWidth||300),height=Math.max(160,canvas.clientHeight||250),ratio=window.devicePixelRatio||1;
+  canvas.width=Math.floor(width*ratio);canvas.height=Math.floor(height*ratio);
+  const ctx=canvas.getContext("2d");ctx.setTransform(ratio,0,0,ratio,0,0);
+  ctx.clearRect(0,0,width,height);
+  const axis=(data.y_axis||[]).map(Number),rows=data.liquidation_leverage_data||[];
+  if(!axis.length||!rows.length)return;
+  const minP=Math.min(...axis),maxP=Math.max(...axis),span=maxP-minP;
+  if(!Number.isFinite(span)||span<=0)return;
+  const maxX=Math.max(1,...rows.map(row=>Number(row[0])||0));
+  const maxV=Math.max(1,...rows.map(row=>Number(row[2])||0));
+  const cellW=Math.max(1,width/(maxX+1)),cellH=Math.max(1,height/axis.length);
+  const yFor=price=>height-(price-minP)/span*height;
+  for(const row of rows){
+   const xIndex=Number(row[0]),yIndex=Number(row[1]),value=Number(row[2]);
+   const price=axis[yIndex];
+   if(!Number.isFinite(xIndex)||!Number.isFinite(price)||!Number.isFinite(value)||value<=0)continue;
+   const intensity=Math.min(1,Math.log1p(value)/Math.log1p(maxV));
+   const y=yFor(price);
+   ctx.fillStyle="rgba(255, "+Math.round(80+110*(1-intensity))+", 75, "+(0.12+0.78*intensity)+")";
+   ctx.fillRect(xIndex*cellW,y-cellH/2,cellW+1,cellH+1);
+  }
+  const bars=data.price_candlesticks||[];
+  if(bars.length>1){
+   ctx.beginPath();ctx.strokeStyle="rgba(225,238,255,.9)";ctx.lineWidth=1.2;
+   let started=false;
+   bars.forEach((bar,index)=>{
+    const close=Number(bar[4]),x=index/(bars.length-1)*width,y=yFor(close);
+    if(!Number.isFinite(close))return;
+    if(!started){ctx.moveTo(x,y);started=true}else ctx.lineTo(x,y);
+   });
+   if(started)ctx.stroke();
+  }
+  if(Number.isFinite(Number(currentPrice))&&Number(currentPrice)>=minP&&Number(currentPrice)<=maxP){
+   const y=yFor(Number(currentPrice));ctx.save();ctx.setLineDash([5,4]);ctx.strokeStyle="#7dd3fc";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(width,y);ctx.stroke();ctx.restore();
+   ctx.fillStyle="#7dd3fc";ctx.font="11px Tahoma";ctx.fillText("قیمت فعلی",8,Math.max(12,y-5));
+  }
+  ctx.fillStyle="rgba(220,232,250,.8)";ctx.font="10px Arial";
+  for(let n=0;n<=4;n++){const p=maxP-(span*n/4);const y=height*n/4;ctx.fillText(p.toLocaleString("en-US",{maximumFractionDigits:2}),width-90,y+11)}
+ };
+ draw();
+ if(typeof ResizeObserver!=="undefined"){heatmapResizeObserver=new ResizeObserver(draw);heatmapResizeObserver.observe(canvas.parentElement)}
+ const lc=(lastA&&lastA.liquidation_context)||{},above=lc.nearest_above,below=lc.nearest_below;
+ clustersEl.innerHTML=
+  '<div class="heatmap-cluster"><b>نزدیک‌ترین خوشه بالای قیمت</b><br>'+(above?fmt(above.price)+" | شدت نسبی "+fmt(above.relative_intensity):"داده‌ای موجود نیست")+'</div>'+
+  '<div class="heatmap-cluster"><b>نزدیک‌ترین خوشه زیر قیمت</b><br>'+(below?fmt(below.price)+" | شدت نسبی "+fmt(below.relative_intensity):"داده‌ای موجود نیست")+'</div>';
+}
 function renderChart(d){
- const el=document.getElementById("price-chart");
+ if(!d)return;
+ const el=document.getElementById("price-chart"),rsiEl=document.getElementById("rsi-chart");
  const source=document.getElementById("chart-source");
  source.textContent="منبع کندل: "+(d.chart_source||d.candle_source||"نامشخص")+" | "+(d.timeframe||"");
  if(priceChart){priceChart.remove();priceChart=null}
+ if(rsiChart){rsiChart.remove();rsiChart=null}
  if(chartResizeObserver){chartResizeObserver.disconnect();chartResizeObserver=null}
- el.innerHTML="";
+ if(rsiResizeObserver){rsiResizeObserver.disconnect();rsiResizeObserver=null}
+ livePriceLine=null;el.innerHTML="";rsiEl.innerHTML="";
  if(!window.LightweightCharts||!Array.isArray(d.chart_candles)||!d.chart_candles.length){
-  el.textContent="کتابخانه نمودار یا داده کندل در دسترس نیست؛ یک‌بار صفحه را تازه‌سازی کن.";
+  el.textContent="کتابخانه نمودار یا داده کندل در دسترس نیست؛ صفحه را تازه‌سازی کن.";
+  renderLiquidationHeatmap(d.liquidation_heatmap,(d.live_quote||{}).price);
   return;
  }
  const width=Math.max(300,el.clientWidth||window.innerWidth-50);
  priceChart=LightweightCharts.createChart(el,{
-  width:width,height:el.clientHeight||390,
+  width:width,height:el.clientHeight||350,
   layout:{background:{color:"#0b172a"},textColor:"#cbd6e8",fontFamily:"Tahoma,Arial"},
-  grid:{vertLines:{color:"#1b2940"},horzLines:{color:"#1b2940"}},
-  rightPriceScale:{borderColor:"#405477",scaleMargins:{top:0.12,bottom:0.12}},
+  grid:{vertLines:{color:"#17253b"},horzLines:{color:"#17253b"}},
+  rightPriceScale:{borderColor:"#405477",scaleMargins:{top:0.1,bottom:0.1}},
   timeScale:{borderColor:"#405477",timeVisible:true,secondsVisible:false},
   crosshair:{mode:LightweightCharts.CrosshairMode.Normal},
   localization:{locale:"en-US"}
  });
  const candles=priceChart.addCandlestickSeries({
   upColor:"#28c997",downColor:"#ff7182",borderVisible:false,
-  wickUpColor:"#28c997",wickDownColor:"#ff7182",
-  priceLineVisible:false
+  wickUpColor:"#28c997",wickDownColor:"#ff7182",priceLineVisible:false
  });
  candles.setData(d.chart_candles);
- if(Array.isArray(d.chart_markers)&&d.chart_markers.length){
-  candles.setMarkers(d.chart_markers.slice().sort((a,b)=>a.time-b.time));
- }
- const levels=d.chart_levels||{},sc=d.conditional_scenarios||{};
- const line=(value,color,title,style,width=1)=>{
-  const n=Number(value);
-  if(!Number.isFinite(n)||n<=0)return;
-  candles.createPriceLine({
-   price:n,color,lineWidth:width,lineStyle:style,
-   axisLabelVisible:true,title
-  });
+ if(Array.isArray(d.chart_markers)&&d.chart_markers.length)candles.setMarkers(d.chart_markers.slice().sort((a,b)=>a.time-b.time));
+ const levels=d.chart_levels||{},sc=d.conditional_scenarios||{},legend=[];
+ const line=(value,color,title,style,width=1,axisLabel=true)=>{
+  const n=Number(value);if(!Number.isFinite(n)||n<=0)return null;
+  const item=candles.createPriceLine({price:n,color,lineWidth:width,lineStyle:style,axisLabelVisible:axisLabel,title});
+  legend.push('<span class="legend-chip"><span class="legend-dot" style="background:'+color+'"></span>'+title+' '+fmt(n)+'</span>');
+  return item;
  };
  const q=d.live_quote||{};
- if(q.available&&(!d.chart_source_symbol||q.source_symbol===d.chart_source_symbol))line(q.price,"#7dd3fc","قیمت زنده",LightweightCharts.LineStyle.Solid,1);
- const dashed=LightweightCharts.LineStyle.Dashed;
- const dotted=LightweightCharts.LineStyle.Dotted;
- line(levels.support,"#4f9de8","حمایت",dashed);
- line(levels.resistance,"#e8b34b","مقاومت",dashed);
+ if(q.available&&(!d.chart_source_symbol||q.source_symbol===d.chart_source_symbol))livePriceLine=line(q.price,"#7dd3fc","قیمت زنده",LightweightCharts.LineStyle.Solid,1,true);
+ const dashed=LightweightCharts.LineStyle.Dashed,dotted=LightweightCharts.LineStyle.Dotted;
  if(d.signal==="BUY"||d.signal==="SELL"){
-  line(levels.entry,"#28c997","ورود",LightweightCharts.LineStyle.Solid,2);
-  line(levels.stop_loss,"#ff7182","حد ضرر",LightweightCharts.LineStyle.Solid,2);
-  (levels.targets||[]).forEach((v,i)=>line(v,"#28c997","هدف "+(i+1),dotted));
+  line(levels.entry,"#28c997","ورود",LightweightCharts.LineStyle.Solid,2,true);
+  line(levels.stop_loss,"#ff7182","حد ضرر",LightweightCharts.LineStyle.Solid,2,true);
+  (levels.targets||[]).forEach((value,index)=>line(value,"#28c997","هدف "+(index+1),dotted,1,index===0));
  }else{
-  line(sc.bullish&&sc.bullish.trigger,"#28c997","شکست صعودی",dashed,2);
-  line(sc.bearish&&sc.bearish.trigger,"#ff7182","شکست نزولی",dashed,2);
+  line(sc.bullish&&sc.bullish.trigger,"#28c997","شکست صعودی",dashed,2,true);
+  line(sc.bearish&&sc.bearish.trigger,"#ff7182","شکست نزولی",dashed,2,true);
  }
- const fvg=levels.fvg||{};
- if(fvg.low!=null&&fvg.high!=null){
-  line(fvg.low,"#a78bfa","FVG پایین",dotted);
-  line(fvg.high,"#a78bfa","FVG بالا",dotted);
+ const ob=levels.order_block||{},fvg=levels.fvg||{};
+ const showOb=document.getElementById("overlay-ob").checked,showFvg=document.getElementById("overlay-fvg").checked,showStructure=document.getElementById("overlay-structure").checked;
+ if(showOb&&ob.low!=null&&ob.high!=null&&!ob.mitigated){
+  line(ob.low,"#f59e0b","کف Order Block",dotted,1,false);
+  line(ob.high,"#f59e0b","سقف Order Block",dotted,1,false);
  }
- const ob=levels.order_block||{};
- if(ob.low!=null&&ob.high!=null){
-  line(ob.low,"#f59e0b","Order Block پایین",dotted);
-  line(ob.high,"#f59e0b","Order Block بالا",dotted);
+ if(showFvg&&fvg.low!=null&&fvg.high!=null){
+  line(fvg.low,"#a78bfa","کف FVG",dotted,1,false);
+  line(fvg.high,"#a78bfa","سقف FVG",dotted,1,false);
+ }
+ if(showStructure){
+  line(levels.support,"#4f9de8","حمایت",dashed,1,false);
+  line(levels.resistance,"#e8b34b","مقاومت",dashed,1,false);
+ }
+ document.getElementById("chart-levels-legend").innerHTML=legend.join("")||'<span class="small">سطح قابل نمایش فعالی وجود ندارد.</span>';
+ const rsiData=Array.isArray(d.rsi_chart)?d.rsi_chart.filter(x=>x&&Number.isFinite(Number(x.value))):[];
+ const currentRsi=(d.advanced_analysis||{}).rsi_wilder_14;
+ document.getElementById("rsi-current").textContent="RSI(14): "+fmt(currentRsi)+" | بالای ۷۰: اشباع خرید احتمالی | زیر ۳۰: اشباع فروش احتمالی";
+ if(rsiData.length){
+  rsiChart=LightweightCharts.createChart(rsiEl,{
+   width:Math.max(300,rsiEl.clientWidth||window.innerWidth-50),height:rsiEl.clientHeight||130,
+   layout:{background:{color:"#0b172a"},textColor:"#aebbd0",fontFamily:"Tahoma,Arial"},
+   grid:{vertLines:{color:"#17253b"},horzLines:{color:"#17253b"}},
+   rightPriceScale:{borderColor:"#405477",scaleMargins:{top:0.12,bottom:0.12}},
+   timeScale:{borderColor:"#405477",timeVisible:false,visible:false},
+   crosshair:{mode:LightweightCharts.CrosshairMode.Normal}
+  });
+  const rsiSeries=rsiChart.addLineSeries({color:"#b58cff",lineWidth:2,priceLineVisible:false,lastValueVisible:true});
+  rsiSeries.setData(rsiData);
+  [70,50,30].forEach((level,index)=>rsiSeries.createPriceLine({
+   price:level,color:index===1?"#42516b":"#8b6e65",lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:String(level)
+  }));
+  priceChart.timeScale().subscribeVisibleLogicalRangeChange(range=>{
+   if(range&&rsiChart){try{rsiChart.timeScale().setVisibleLogicalRange(range)}catch(e){}}
+  });
+  priceChart.timeScale().fitContent();
+  const range=priceChart.timeScale().getVisibleLogicalRange();
+  if(range){try{rsiChart.timeScale().setVisibleLogicalRange(range)}catch(e){}}
+  if(typeof ResizeObserver!=="undefined"){
+   rsiResizeObserver=new ResizeObserver(()=>{if(rsiChart&&rsiEl.clientWidth>0)rsiChart.applyOptions({width:rsiEl.clientWidth})});
+   rsiResizeObserver.observe(rsiEl);
+  }
+ }else{
+  rsiEl.textContent="سری تاریخی RSI برای این داده در دسترس نیست.";
  }
  priceChart.timeScale().fitContent();
  if(typeof ResizeObserver!=="undefined"){
-  chartResizeObserver=new ResizeObserver(()=>{
-   if(priceChart&&el.clientWidth>0)priceChart.applyOptions({width:el.clientWidth});
-  });
+  chartResizeObserver=new ResizeObserver(()=>{if(priceChart&&el.clientWidth>0)priceChart.applyOptions({width:el.clientWidth})});
   chartResizeObserver.observe(el);
  }
+ renderLiquidationHeatmap(d.liquidation_heatmap,q.available?q.price:d.analysis_price);
 }
 async function refreshLiveQuote(){
  if(!lastA||!currentAnalysisMarket||!currentAnalysisSymbol)return;
  try{
   const d=await get("/api/quote?market="+currentAnalysisMarket+"&symbol="+encodeURIComponent(currentAnalysisSymbol));
   lastA.live_quote=d.quote;renderLiveQuote(d.quote);
+  if(livePriceLine&&d.quote&&d.quote.available&&(!lastA.chart_source_symbol||d.quote.source_symbol===lastA.chart_source_symbol)){try{livePriceLine.applyOptions({price:d.quote.price})}catch(e){}}
  }catch(e){document.getElementById("livequote").textContent="به‌روزرسانی قیمت زنده ناموفق بود: "+e.message}
 }
 
