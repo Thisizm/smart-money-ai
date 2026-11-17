@@ -1,52 +1,70 @@
 
-<!DOCTYPE html>
+<!doctype html>
 <html lang="fa" dir="rtl">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Smart Money AI</title>
 <style>
-body{margin:0;background:#101827;color:#eee;font-family:Tahoma,Arial;padding:20px}
-h1{color:#42d6a4}
-.card{background:#1c293b;padding:18px;margin:14px 0;border-radius:12px}
-button{background:#42d6a4;border:0;padding:12px 20px;border-radius:8px;font-weight:bold}
-pre{white-space:pre-wrap;direction:ltr}
-</style>
-</head>
+*{box-sizing:border-box}body{margin:0;background:#0c1220;color:#edf2ff;font-family:Tahoma,Arial,sans-serif}
+header{padding:20px 16px;background:#121c30;border-bottom:1px solid #26334b}h1{font-size:21px;margin:0 0 7px}
+small,.muted{color:#9eabc2}.wrap{max-width:900px;margin:auto;padding:16px}.panel{background:#141f33;border:1px solid #293955;border-radius:14px;padding:15px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}label{font-size:13px;color:#b9c6da;display:block;margin-bottom:6px}
+select,button{width:100%;padding:12px;border-radius:9px;border:1px solid #40516e;background:#0d1728;color:#fff;font-size:14px}
+button{background:#2563eb;border:0;font-weight:bold;margin-top:12px;cursor:pointer}.result{font-size:23px;font-weight:bold;margin:10px 0}
+.buy{color:#42d392}.sell{color:#ff7373}.wait{color:#f3c969}.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.level{background:#0c1729;padding:10px;border-radius:9px}.level b{display:block;margin-top:6px;overflow-wrap:anywhere}
+ul{padding-right:20px;line-height:2}.foot{font-size:12px;line-height:1.9;color:#9eabc2}
+@media(max-width:520px){.grid{grid-template-columns:1fr}.levels{grid-template-columns:1fr}}
+</style></head>
 <body>
-<h1>Smart Money AI</h1>
-<p>داشبورد تحلیل بازار و هشدارهای معاملاتی</p>
-<div class="card">
-<h3>وضعیت سرور</h3>
-<p id="status">در حال بررسی...</p>
+<header><div class="wrap"><h1>SMART MONEY AI</h1><small>داشبورد آزمایشی تحلیل کریپتو، فارکس و طلا</small></div></header>
+<main class="wrap">
+<div class="panel">
+ <div class="grid">
+  <div><label>بازار</label><select id="market" onchange="updateSymbols()"><option value="crypto">ارز دیجیتال</option><option value="forex">فارکس</option><option value="gold">طلا</option></select></div>
+  <div><label>نماد</label><select id="symbol"></select></div>
+  <div><label>تایم‌فریم</label><select id="tf"><option value="5m">۵ دقیقه</option><option value="15m" selected>۱۵ دقیقه</option><option value="1h">۱ ساعت</option><option value="4h">۴ ساعت</option><option value="1d">روزانه</option><option value="1w">هفتگی</option></select></div>
+ </div>
+ <button onclick="runAnalysis()">تحلیل بازار</button>
+ <div id="status" class="muted" style="margin-top:12px">برای شروع، بازار و نماد را انتخاب کن.</div>
 </div>
-<div class="card">
-<h3>آخرین هشدارها</h3>
-<button onclick="loadAlerts()">به‌روزرسانی</button>
-<pre id="alerts">در انتظار دریافت اطلاعات...</pre>
+<div id="result" class="panel" style="display:none">
+ <div class="muted" id="caption"></div><div class="result" id="signal"></div>
+ <div class="levels">
+  <div class="level">قیمت فعلی<b id="price">—</b></div>
+  <div class="level">حد ضرر<b id="sl">—</b></div>
+  <div class="level">هدف اول<b id="tp1">—</b></div>
+ </div>
+ <div class="level" style="margin-top:8px">هدف دوم<b id="tp2">—</b></div>
+ <h3>دلایل تحلیل</h3><ul id="notes"></ul>
+ <p class="muted" id="extra"></p>
 </div>
+<div class="panel"><b>وضعیت سرویس</b><p id="health" class="muted">در حال بررسی…</p></div>
+<div class="panel foot">این ابزار نسخه آزمایشی است. تشخیص BOS و FVG در این نسخه الگوریتمی و ساده است و دید واقعی سفارش‌های مؤسسات یا Order Book اختصاصی را نشان نمی‌دهد. سیگنال‌ها توصیه مالی نیستند؛ پیش از هر معامله، داده و حد ضرر را بررسی و ابتدا روی حساب آزمایشی تست کن. داده‌های بازار ممکن است محدود، با تأخیر یا در پلن رایگان غیرقابل‌دسترس باشند.</div>
+</main>
 <script>
-async function loadStatus(){
-try{
-const r=await fetch('/health');
-const d=await r.json();
-document.getElementById('status').textContent=d.status==='ok'?'سرور فعال است':'وضعیت نامشخص';
-}catch(e){
-document.getElementById('status').textContent='اتصال برقرار نشد';
+const symbols={crypto:["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT"],forex:["EUR/USD","GBP/USD","USD/JPY","AUD/USD","USD/CHF","USD/CAD"],gold:["XAU/USD"]};
+function updateSymbols(){let m=document.getElementById('market').value,s=document.getElementById('symbol');s.innerHTML='';symbols[m].forEach(x=>{let o=document.createElement('option');o.value=x;o.textContent=x;s.appendChild(o)});}
+function fmt(v){if(v===null||v===undefined)return '—';return Number(v).toLocaleString('en-US',{maximumFractionDigits:6});}
+async function runAnalysis(){
+ let m=document.getElementById('market').value,s=document.getElementById('symbol').value,t=document.getElementById('tf').value;
+ let st=document.getElementById('status');st.textContent='در حال دریافت داده و تحلیل…';
+ try{
+  let r=await fetch(`/api/analyze?market=${encodeURIComponent(m)}&symbol=${encodeURIComponent(s)}&timeframe=${encodeURIComponent(t)}`);
+  let d=await r.json();if(!r.ok)throw new Error(d.detail||'خطا در تحلیل');
+  document.getElementById('result').style.display='block';
+  document.getElementById('caption').textContent=`${d.symbol} | ${t} | امتیاز ${d.score} از ۵`;
+  let sig=document.getElementById('signal');sig.textContent=d.signal==='BUY'?'سیگنال خرید — '+d.bias:d.signal==='SELL'?'سیگنال فروش — '+d.bias:'انتظار — '+d.bias;
+  sig.className='result '+(d.signal==='BUY'?'buy':d.signal==='SELL'?'sell':'wait');
+  document.getElementById('price').textContent=fmt(d.price);
+  document.getElementById('sl').textContent=fmt(d.stop_loss);
+  document.getElementById('tp1').textContent=fmt(d.take_profit_1);
+  document.getElementById('tp2').textContent=fmt(d.take_profit_2);
+  document.getElementById('notes').innerHTML=d.analysis.map(x=>`<li>${x}</li>`).join('');
+  document.getElementById('extra').textContent=`تعداد کندل بررسی‌شده: ${d.candles_count}. این نتیجه فقط بر اساس داده دریافتی و قواعد ساده این نسخه است.`;
+  st.textContent='تحلیل انجام شد؛ زمان: '+new Date().toLocaleTimeString();
+ }catch(e){st.textContent='خطا: '+e.message;document.getElementById('result').style.display='none';}
 }
-}
-async function loadAlerts(){
-try{
-const r=await fetch('/api/alerts');
-const d=await r.json();
-document.getElementById('alerts').textContent=
-d.length?JSON.stringify(d,null,2):'هنوز هشداری دریافت نشده است';
-}catch(e){
-document.getElementById('alerts').textContent='خطا در دریافت هشدارها';
-}
-}
-loadStatus();
-loadAlerts();
-</script>
-</body>
-</html>
+async function check(){try{let r=await fetch('/api/status');let d=await r.json();document.getElementById('health').textContent='سرور آنلاین | کلید Twelve Data: '+(d.twelve_data_key_configured?'تنظیم شده':'تنظیم نشده')+' | داده عمومی کریپتو فعال است.';}catch(e){document.getElementById('health').textContent='ارتباط با سرور برقرار نشد.';}}
+updateSymbols();check();
+</script></body></html>
