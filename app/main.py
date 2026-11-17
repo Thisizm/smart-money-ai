@@ -288,20 +288,88 @@ def ema(values, period):
 def analyze(candles, market, symbol, timeframe):
     if len(candles) < 60:
         raise HTTPException(502, "برای تحلیل معتبرتر حداقل ۶۰ کندل لازم است")
+
     closes = [c["close"] for c in candles]
     last = candles[-1]
     previous = candles[-2]
     e9, e21, e50 = ema(closes, 9), ema(closes, 21), ema(closes, 50)
 
-    window = candles[-21:-1]
-    swing_high = max(c["high"] for c in window)
-    swing_low = min(c["low"] for c in window)
-    bos_up = last["close"] > swing_high
-    bos_down = last["close"] < swing_low
-    sweep_high = last["high"] > swing_high and last["close"] < swing_high
-    sweep_low = last["low"] < swing_low and last["close"] > swing_low
-    bullish_fvg = last["low"] > candles[-3]["high"]
-    bearish_fvg = last["high"] < candles[-3]["low"]
+    # Confirmed swing points: two candles on each side, avoiding unconfirmed pivots.
+    pivot_highs, pivot_lows = [], []
+    for i in range(2, len(candles) - 2):
+        high = candles[i]["high"]
+        low = candles[i]["low"]
+        left_highs = [c["high"] for c in candles[i - 2:i]]
+        right_highs = [c["high"] for c in candles[i + 1:i + 3]]
+        left_lows = [c["low"] for c in candles[i - 2:i]]
+        right_lows = [c["low"] for c in candles[i + 1:i + 3]]
+        if high > max(left_highs) and high >= max(right_highs):
+            pivot_highs.append({"index": i, "price": high})
+        if low < min(left_lows) and low <= min(right_lows):
+            pivot_lows.append({"index": i, "price": low})
+
+    recent_window = candles[-30:-1]
+    swing_high = pivot_highs[-1]["price"] if pivot_highs else max(c["high"] for c in recent_window)
+    swing_low = pivot_lows[-1]["price"] if pivot_lows else min(c["low"] for c in recent_window)
+
+    structure_trend = "unknown"
+    if len(pivot_highs) >= 2 and len(pivot_lows) >= 2:
+        higher_highs = pivot_highs[-1]["price"] > pivot_highs[-2]["price"]
+        higher_lows = pivot_lows[-1]["price"] > pivot_lows[-2]["price"]
+        lower_highs = pivot_highs[-1]["price"] < pivot_highs[-2]["price"]
+        lower_lows = pivot_lows[-1]["price"] < pivot_lows[-2]["price"]
+        if higher_highs and higher_lows:
+            structure_trend = "bullish"
+        elif lower_highs and lower_lows:
+            structure_trend = "bearish"
+        elif higher_highs and lower_lows:
+            structure_trend = "expanding_range"
+
+    recent_closes = [c["close"] for c in candles[-3:]]
+    broke_up = any(value > swing_high for value in recent_closes)
+    broke_down = any(value < swing_low for value in recent_closes)
+    choch_up = broke_up and structure_trend == "bearish"
+    choch_down = broke_down and structure_trend == "bullish"
+    bos_up = broke_up and not choch_up
+    bos_down = broke_down and not choch_down
+
+    # Search recent candles for liquidity sweeps against previously confirmed pivots.
+    sweep_high_event = None
+    sweep_low_event = None
+    for i in range(max(2, len(candles) - 10), len(candles)):
+        candle = candles[i]
+        eligible_highs = [p for p in pivot_highs if p["index"] <= i - 2]
+        eligible_lows = [p for p in pivot_lows if p["index"] <= i - 2]
+        if eligible_highs:
+            level = eligible_highs[-1]["price"]
+            if candle["high"] > level and candle["close"] < level:
+                sweep_high_event = {"level": level, "time": candle["time"]}
+        if eligible_lows:
+            level = eligible_lows[-1]["price"]
+            if candle["low"] < level and candle["close"] > level:
+                sweep_low_event = {"level": level, "time": candle["time"]}
+    sweep_high = sweep_high_event is not None
+    sweep_low = sweep_low_event is not None
+
+    # Keep the latest unfilled three-candle fair-value gap from recent history.
+    bullish_fvg_zone = None
+    bearish_fvg_zone = None
+    for i in range(max(2, len(candles) - 16), len(candles)):
+        older = candles[i - 2]
+        current = candles[i]
+        if current["low"] > older["high"]:
+            zone_low, zone_high = older["high"], current["low"]
+            filled = any(candles[j]["low"] <= zone_low for j in range(i + 1, len(candles)))
+            if not filled:
+                bullish_fvg_zone = {"low": zone_low, "high": zone_high, "time": current["time"]}
+        if current["high"] < older["low"]:
+            zone_low, zone_high = current["high"], older["low"]
+            filled = any(candles[j]["high"] >= zone_high for j in range(i + 1, len(candles)))
+            if not filled:
+                bearish_fvg_zone = {"low": zone_low, "high": zone_high, "time": current["time"]}
+
+    bullish_fvg = bullish_fvg_zone is not None
+    bearish_fvg = bearish_fvg_zone is not None
 
     trs = []
     for index in range(1, len(candles)):
@@ -318,25 +386,32 @@ def analyze(candles, market, symbol, timeframe):
 
     bull = 0
     bear = 0
-    bull += 20 if e9 > e21 else 0
-    bear += 20 if e9 < e21 else 0
-    bull += 15 if e21 > e50 else 0
-    bear += 15 if e21 < e50 else 0
-    bull += 10 if last["close"] > e21 else 0
-    bear += 10 if last["close"] < e21 else 0
-    bull += 25 if bos_up else 0
-    bear += 25 if bos_down else 0
-    bull += 15 if sweep_low else 0
-    bear += 15 if sweep_high else 0
-    bull += 10 if bullish_fvg else 0
-    bear += 10 if bearish_fvg else 0
-    bull += 5 if volume_confirm and last["close"] >= previous["close"] else 0
-    bear += 5 if volume_confirm and last["close"] <= previous["close"] else 0
+    bull += 12 if e9 > e21 else 0
+    bear += 12 if e9 < e21 else 0
+    bull += 10 if e21 > e50 else 0
+    bear += 10 if e21 < e50 else 0
+    bull += 8 if last["close"] > e21 else 0
+    bear += 8 if last["close"] < e21 else 0
+    bull += 8 if structure_trend == "bullish" else 0
+    bear += 8 if structure_trend == "bearish" else 0
+    bull += 22 if bos_up else 0
+    bear += 22 if bos_down else 0
+    bull += 14 if choch_up else 0
+    bear += 14 if choch_down else 0
+    bull += 18 if sweep_low else 0
+    bear += 18 if sweep_high else 0
+    bull += 8 if bullish_fvg else 0
+    bear += 8 if bearish_fvg else 0
+    bull += 4 if volume_confirm and last["close"] >= previous["close"] else 0
+    bear += 4 if volume_confirm and last["close"] <= previous["close"] else 0
 
-    direction = "BUY" if bull >= 60 and bull - bear >= 15 else (
-        "SELL" if bear >= 60 and bear - bull >= 15 else "WAIT"
+    # EMA alignment alone is not enough: require a structural clue as well.
+    bull_structure_ok = bos_up or choch_up or sweep_low or bullish_fvg
+    bear_structure_ok = bos_down or choch_down or sweep_high or bearish_fvg
+    direction = "BUY" if bull >= 55 and bull - bear >= 12 and bull_structure_ok else (
+        "SELL" if bear >= 55 and bear - bull >= 12 and bear_structure_ok else "WAIT"
     )
-    setup_score = max(bull, bear)
+    setup_score = min(100, max(bull, bear))
     price = last["close"]
 
     if direction == "BUY":
@@ -350,19 +425,21 @@ def analyze(candles, market, symbol, timeframe):
     else:
         stop, targets, risk = None, [None, None, None], None
 
-    prior_trend_up = ema(closes[:-1], 21) > ema(closes[:-1], 50)
-    choch = "صعودی" if bos_up and not prior_trend_up else (
-        "نزولی" if bos_down and prior_trend_up else "تأیید نشده"
-    )
+    if choch_up:
+        choch = "صعودی"
+    elif choch_down:
+        choch = "نزولی"
+    else:
+        choch = "تأیید نشده"
 
     order_block = None
-    if bos_up:
-        for candle in reversed(candles[-12:-1]):
+    if bos_up or choch_up:
+        for candle in reversed(candles[-16:-1]):
             if candle["close"] < candle["open"]:
                 order_block = {"type": "تقریبی صعودی", "low": candle["low"], "high": candle["high"]}
                 break
-    elif bos_down:
-        for candle in reversed(candles[-12:-1]):
+    elif bos_down or choch_down:
+        for candle in reversed(candles[-16:-1]):
             if candle["close"] > candle["open"]:
                 order_block = {"type": "تقریبی نزولی", "low": candle["low"], "high": candle["high"]}
                 break
@@ -370,28 +447,47 @@ def analyze(candles, market, symbol, timeframe):
     notes = [
         "EMA 9/21: " + ("صعودی" if e9 > e21 else "نزولی"),
         "EMA 21/50: " + ("صعودی" if e21 > e50 else "نزولی"),
-        "ساختار: " + ("BOS صعودی" if bos_up else "BOS نزولی" if bos_down else "شکست ساختار دیده نشد"),
+        "ساختار سوئینگ: " + {
+            "bullish": "سقف و کف بالاتر (صعودی)",
+            "bearish": "سقف و کف پایین‌تر (نزولی)",
+            "expanding_range": "دامنه در حال گسترش/متناقض",
+            "unknown": "ساختار سوئینگ روشن نیست"
+        }[structure_trend],
+        "شکست ساختار: " + ("BOS صعودی" if bos_up else "BOS نزولی" if bos_down else "شکست تأییدشده‌ای دیده نشد"),
         "تغییر کاراکتر (CHOCH): " + choch,
-        "لیکوییدیتی: " + ("جمع‌آوری نقدینگی زیر کف" if sweep_low else "جمع‌آوری نقدینگی بالای سقف" if sweep_high else "سوییپ واضح دیده نشد"),
-        "FVG: " + ("گپ ارزش منصفانه صعودی" if bullish_fvg else "گپ ارزش منصفانه نزولی" if bearish_fvg else "FVG واضح دیده نشد"),
+        "لیکوییدیتی: " + ("سوییپ نقدینگی زیر کف در ۱۰ کندل اخیر" if sweep_low else "سوییپ نقدینگی بالای سقف در ۱۰ کندل اخیر" if sweep_high else "سوییپ تأییدشده‌ای در ۱۰ کندل اخیر پیدا نشد"),
+        "FVG: " + ("ناحیه صعودی باز در کندل‌های اخیر" if bullish_fvg else "ناحیه نزولی باز در کندل‌های اخیر" if bearish_fvg else "FVG باز و تأییدنشده‌ای پیدا نشد"),
         "حجم: " + ("بالاتر از میانگین ۲۰ کندل" if volume_confirm else "تأیید حجمی ندارد")
     ]
+    wait_reasons = []
+    if direction == "WAIT":
+        if max(bull, bear) < 55:
+            wait_reasons.append("امتیاز هم‌جهتی به حداقل ۵۵ نرسیده")
+        if abs(bull - bear) < 12:
+            wait_reasons.append("برتری خریدار یا فروشنده به‌اندازه کافی واضح نیست")
+        if not bull_structure_ok and not bear_structure_ok:
+            wait_reasons.append("شکست ساختار، CHOCH، سوییپ یا FVG باز تأیید نشده")
+        notes.append("علت WAIT: " + "؛ ".join(wait_reasons or ["شواهد کافی برای ورود وجود ندارد"]))
+
     return {
         "market": market, "symbol": symbol, "timeframe": timeframe,
         "signal": direction, "bias": "صعودی" if direction == "BUY" else "نزولی" if direction == "SELL" else "خنثی",
         "setup_score": setup_score, "bull_score": bull, "bear_score": bear,
         "score_note": "امتیاز تجربی هم‌جهتی شروط است و احتمال موفقیت معامله نیست.",
+        "wait_reason": wait_reasons,
+        "market_structure": structure_trend,
         "price": price, "atr": atr, "stop_loss": stop,
         "take_profit_1": targets[0], "take_profit_2": targets[1], "take_profit_3": targets[2],
         "risk_per_unit": risk, "swing_high": swing_high, "swing_low": swing_low,
         "bos": "صعودی" if bos_up else "نزولی" if bos_down else "ندارد",
         "choch": choch, "liquidity_sweep": "پایین" if sweep_low else "بالا" if sweep_high else "ندارد",
+        "liquidity_sweep_level": (sweep_low_event or sweep_high_event or {}).get("level"),
         "fvg": "صعودی" if bullish_fvg else "نزولی" if bearish_fvg else "ندارد",
+        "fvg_zone": bullish_fvg_zone or bearish_fvg_zone,
         "order_block_approx": order_block, "analysis": notes,
         "candles_count": len(candles), "last_candle_time": last["time"],
         "updated_at": utc_now()
     }
-
 
 @app.get("/", response_class=HTMLResponse)
 def home():
