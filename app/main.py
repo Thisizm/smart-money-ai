@@ -940,18 +940,18 @@ def analyze(candles, market, symbol, timeframe):
     smart_candidates = {"long": [], "short": []}
     if order_block and not order_block.get("mitigated"):
         ob_low, ob_high = float(order_block["low"]), float(order_block["high"])
-        if "صعودی" in order_block.get("type", "") and ob_high <= price + atr * 0.25:
+        if "صعودی" in order_block.get("type", "") and ob_high <= price:
             smart_candidates["long"].append(("order_block", ob_low, ob_high, candles.index(next(c for c in candles if c["time"] == order_block.get("displacement_time")))))
-        elif "نزولی" in order_block.get("type", "") and ob_low >= price - atr * 0.25:
+        elif "نزولی" in order_block.get("type", "") and ob_low >= price:
             smart_candidates["short"].append(("order_block", ob_low, ob_high, candles.index(next(c for c in candles if c["time"] == order_block.get("displacement_time")))))
-    if bullish_fvg_zone and bullish_fvg_zone["high"] <= price + atr * 0.25:
+    if bullish_fvg_zone and bullish_fvg_zone["high"] <= price:
         smart_candidates["long"].append(("fvg", float(bullish_fvg_zone["low"]), float(bullish_fvg_zone["high"]), int(bullish_fvg_zone["formation_index"])))
-    if bearish_fvg_zone and bearish_fvg_zone["low"] >= price - atr * 0.25:
+    if bearish_fvg_zone and bearish_fvg_zone["low"] >= price:
         smart_candidates["short"].append(("fvg", float(bearish_fvg_zone["low"]), float(bearish_fvg_zone["high"]), int(bearish_fvg_zone["formation_index"])))
     ema_band = max(atr * 0.12, abs(price) * 0.0002)
-    if ema21 < price:
+    if ema21 + ema_band <= price:
         smart_candidates["long"].append(("ema21", max(0.0, ema21 - ema_band), ema21 + ema_band, len(candles) - 2))
-    if ema21 > price:
+    if ema21 - ema_band >= price:
         smart_candidates["short"].append(("ema21", max(0.0, ema21 - ema_band), ema21 + ema_band, len(candles) - 2))
 
     def make_pullback_plan(side):
@@ -960,7 +960,8 @@ def analyze(candles, market, symbol, timeframe):
             if low <= 0 or high <= low or formation_index >= len(candles) - 1:
                 continue
             distance = max(0.0, low - price, price - high)
-            if distance <= atr * 3.0:
+            directional_zone = (high <= price) if side == "long" else (low >= price)
+            if distance <= atr * 3.0 and directional_zone:
                 candidates.append((distance, source, low, high, formation_index))
         if not candidates:
             return {
@@ -1059,14 +1060,8 @@ def analyze(candles, market, symbol, timeframe):
 
     smart_long = make_pullback_plan("long")
     smart_short = make_pullback_plan("short")
-    # Prefer the final signal; if it is WAIT, fall back to the directional bias.
-    # Risk-blocked means no trade is permitted, even when a directional bias exists.
-    preferred_side = (
-        "long" if direction == "BUY" else
-        "short" if direction == "SELL" else
-        "long" if bias == "صعودی" else
-        "short" if bias == "نزولی" else "neutral"
-    )
+    # The primary signal is authoritative; WAIT cannot become a trade from bias alone.
+    preferred_side = "long" if direction == "BUY" else "short" if direction == "SELL" else "neutral"
     primary_alignment = (
         "aligned" if (direction == "BUY" and preferred_side == "long") or
                      (direction == "SELL" and preferred_side == "short") else
@@ -1080,7 +1075,8 @@ def analyze(candles, market, symbol, timeframe):
         "long": smart_long, "short": smart_short,
         "risk_gate_passed": not risk_blocked,
         "risk_flags": risk_flags,
-        "method": "nearest unmitigated OB/FVG or EMA21 pullback; closed-candle reaction required",
+        "method": "nearest unmitigated OB/FVG or EMA21 pullback strictly on the correct side of price; closed-candle reaction required",
+        "direction_rule": "هم‌جهت با سیگنال اصلی؛ وقتی سیگنال اصلی WAIT است ورود هوشمند جهت مستقل و قابل معامله صادر نمی‌کند.",
         "note": "جهت ترجیحی از سیگنال نهایی و سوگیری تحلیل گرفته شده است؛ فیلتر ریسک مسدود یعنی ورود مجاز نیست. ناحیه‌ها تخمینی‌اند و امتیازها احتمال آماری موفقیت نیستند."
     }
     return {
@@ -1431,6 +1427,20 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             "time": int(result["liquidity_sweep_time"] // 1000),
             "position": "aboveBar" if result.get("liquidity_sweep") == "بالا" else "belowBar",
             "color": "#e9b95e", "shape": "circle", "text": "Liquidity sweep"
+        })
+    divergence_data = ((result.get("advanced_analysis") or {}).get("divergences") or {}).get("signals", [])
+    chart_start_time = int(chart_bars[0]["time"] // 1000) if chart_bars else 0
+    for divergence in divergence_data:
+        marker_time = int(divergence.get("time", 0) // 1000)
+        if marker_time < chart_start_time:
+            continue
+        bullish_div = divergence.get("direction") == "bullish"
+        result["chart_markers"].append({
+            "time": marker_time,
+            "position": "belowBar" if divergence.get("pivot_kind") == "low" else "aboveBar",
+            "color": "#38bdf8" if bullish_div else "#fb923c",
+            "shape": "circle",
+            "text": "واگرایی " + ("صعودی" if bullish_div else "نزولی")
         })
     result["paper_trade"] = record_signal(result)
     return result
