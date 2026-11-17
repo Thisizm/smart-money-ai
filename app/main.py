@@ -2722,7 +2722,7 @@ def _compact_ai_evidence(value, depth=0, list_limit=8, string_limit=500, key_lim
 
 @app.post("/api/ai-decision")
 async def ai_decision(request: Request):
-    """Gemini is the primary independent analyst; existing engines provide evidence and safety checks."""
+    """Gemini is the primary independent analyst; evidence sources are gathered concurrently."""
     if not GEMINI_API_KEY:
         raise HTTPException(503, "برای موتور اصلی هوش مصنوعی، GEMINI_API_KEY رایگان را در Render ثبت کن.")
     try:
@@ -2748,28 +2748,55 @@ async def ai_decision(request: Request):
             result["cache_hit"] = True
             return result
 
+    request_started = time.perf_counter()
+
+    def run_evidence_task(fn):
+        started = time.perf_counter()
+        try:
+            return fn(), round((time.perf_counter() - started) * 1000)
+        except Exception as exc:
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)[:180]
+            return {"available": False, "error": detail}, round((time.perf_counter() - started) * 1000)
+
     try:
-        # The existing technical engine and data connectors are the evidence providers.
-        technical = api_analyze(market=market, symbol=symbol, timeframe=timeframe)
-        mtf = multi_timeframe(market=market, symbol=symbol)
-        try:
-            context = market_context(market)
-        except Exception as exc:
-            context = {"available": False, "error": str(exc)[:180]}
-        try:
-            cross_asset = correlations()
-        except Exception as exc:
-            cross_asset = {"available": False, "error": str(exc)[:180]}
-        try:
-            market_dominance = dominance() if market == "crypto" else {
+        # These evidence groups are independent. Gather them concurrently so the
+        # slowest provider, rather than the sum of provider latencies, sets the wait.
+        tasks = {
+            "technical": lambda: api_analyze(market=market, symbol=symbol, timeframe=timeframe),
+            "mtf": lambda: multi_timeframe(market=market, symbol=symbol),
+            "context": lambda: market_context(market),
+            "cross_asset": correlations,
+            "dominance": dominance if market == "crypto" else lambda: {
                 "available": False, "note": "دامیننس فقط برای زمینه بازار کریپتو کاربرد دارد."
-            }
-        except Exception as exc:
-            market_dominance = {"available": False, "error": str(exc)[:180]}
-        try:
-            calendar = economic_calendar()
-        except Exception as exc:
-            calendar = {"available": False, "error": str(exc)[:180]}
+            },
+            "calendar": economic_calendar
+        }
+        gathered = {}
+        with ThreadPoolExecutor(max_workers=6, thread_name_prefix="ai-evidence") as pool:
+            future_map = {pool.submit(run_evidence_task, fn): name for name, fn in tasks.items()}
+            for future in as_completed(future_map):
+                gathered[future_map[future]] = future.result()
+
+        technical, technical_ms = gathered["technical"]
+        mtf, mtf_ms = gathered["mtf"]
+        context, context_ms = gathered["context"]
+        cross_asset, correlations_ms = gathered["cross_asset"]
+        market_dominance, dominance_ms = gathered["dominance"]
+        calendar, calendar_ms = gathered["calendar"]
+
+        # The selected technical analysis and six-timeframe analysis are essential.
+        if not isinstance(technical, dict) or not technical.get("signal"):
+            raise RuntimeError("تحلیل تایم‌فریم انتخابی کامل نشد: " + str(technical.get("error", "داده فنی نامعتبر")))
+        if not isinstance(mtf, dict) or not mtf.get("timeframes"):
+            raise RuntimeError("تحلیل شش تایم‌فریم کامل نشد: " + str(mtf.get("error", "داده چندتایم‌فریمی نامعتبر")))
+        if not isinstance(context, dict):
+            context = {"available": False, "error": "داده زمینه بازار نامعتبر است"}
+        if not isinstance(cross_asset, dict):
+            cross_asset = {"available": False, "error": "داده همبستگی نامعتبر است"}
+        if not isinstance(market_dominance, dict):
+            market_dominance = {"available": False, "error": "داده دامیننس نامعتبر است"}
+        if not isinstance(calendar, dict):
+            calendar = {"available": False, "error": "داده تقویم نامعتبر است"}
 
         raw_evidence = {
             "market": market, "symbol": symbol, "requested_timeframe": timeframe,
@@ -2786,19 +2813,15 @@ async def ai_decision(request: Request):
                 "live_trading_enabled": False
             }
         }
-        # First pass keeps the full six-timeframe picture and the latest evidence items.
+        # Compaction only removes redundant transport/chart payloads, not evidence groups.
         evidence = _compact_ai_evidence(raw_evidence)
         encoded = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), default=str)
-        # If a provider returns unusually verbose news/indicator objects, compact further
-        # without dropping the top-level evidence groups or the six timeframe labels.
         if len(encoded) > 42000:
             evidence = _compact_ai_evidence(
                 raw_evidence, list_limit=4, string_limit=240, key_limit=32
             )
             encoded = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), default=str)
         if len(encoded) > 52000:
-            # Last-resort deterministic summary: keep all timeframe labels and only
-            # the compact technical fields for each timeframe, never raw chart arrays.
             compact_mtf = mtf.get("timeframes", []) if isinstance(mtf, dict) else []
             evidence = {
                 "market": market, "symbol": symbol, "requested_timeframe": timeframe,
@@ -2818,7 +2841,9 @@ async def ai_decision(request: Request):
         if len(encoded) > 52000:
             raise RuntimeError("حجم داده حتی پس از خلاصه‌سازی از حد مجاز بیشتر است؛ گزارش فشرده‌سازی لازم است.")
 
+        gemini_started = time.perf_counter()
         ai_result = call_gemini(evidence)
+        gemini_ms = round((time.perf_counter() - gemini_started) * 1000)
         ai_result = validate_decision(
             ai_result,
             live_quote=technical.get("live_quote"),
@@ -2846,6 +2871,13 @@ async def ai_decision(request: Request):
                 "economic_calendar": bool(calendar.get("available")),
                 "derivatives": bool((technical.get("derivatives") or {}).get("available")),
                 "external_screener": bool((technical.get("external_confirmation") or {}).get("available"))
+            },
+            "performance_ms": {
+                "technical": technical_ms, "six_timeframes": mtf_ms,
+                "macro_news_cot": context_ms, "correlations": correlations_ms,
+                "dominance": dominance_ms, "economic_calendar": calendar_ms,
+                "gemini": gemini_ms,
+                "total": round((time.perf_counter() - request_started) * 1000)
             },
             "provider": ai_result.get("provider", "Google Gemini"),
             "model": ai_result.get("model"),
