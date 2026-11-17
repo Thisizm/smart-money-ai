@@ -153,6 +153,19 @@ def init_db():
             message TEXT
         )
         """)
+        con.execute("""
+        CREATE TABLE IF NOT EXISTS dominance_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sampled_at REAL NOT NULL,
+            source TEXT,
+            btc REAL,
+            eth REAL,
+            usdt REAL,
+            total_market_cap REAL,
+            usdt_market_cap REAL
+        )
+        """)
+        con.execute("CREATE INDEX IF NOT EXISTS idx_dominance_history_sampled_at ON dominance_history(sampled_at)")
 
 
 init_db()
@@ -1965,6 +1978,88 @@ def _build_dominance_payload(source, raw):
     }
 
 
+def _record_dominance_snapshot(payload, sampled_at=None):
+    """Persist real provider snapshots; history starts accumulating after deployment."""
+    if not payload.get("available") or payload.get("usdt") is None:
+        return
+    stamp = float(sampled_at or time.time())
+    total = _as_float(payload.get("total_market_cap_usd"))
+    usdt_cap = total * float(payload["usdt"]) / 100.0 if total is not None else None
+    with db() as con:
+        last = con.execute(
+            "SELECT sampled_at FROM dominance_history ORDER BY sampled_at DESC LIMIT 1"
+        ).fetchone()
+        # Avoid duplicate snapshots from concurrent callers and provider cache hits.
+        if last and stamp - float(last["sampled_at"]) < 60:
+            return
+        con.execute(
+            """INSERT INTO dominance_history
+            (sampled_at, source, btc, eth, usdt, total_market_cap, usdt_market_cap)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (stamp, payload.get("source"), payload.get("btc"), payload.get("eth"),
+             payload.get("usdt"), total, usdt_cap)
+        )
+        # Keep a bounded rolling archive (about 90 days at normal polling cadence).
+        con.execute("DELETE FROM dominance_history WHERE sampled_at < ?", (stamp - 90 * 86400,))
+
+
+def _dominance_history_payload(current):
+    now = time.time()
+    with db() as con:
+        rows = con.execute(
+            "SELECT sampled_at, usdt, btc, eth, total_market_cap, usdt_market_cap "
+            "FROM dominance_history WHERE sampled_at >= ? ORDER BY sampled_at",
+            (now - 8 * 86400,)
+        ).fetchall()
+    points = [dict(row) for row in rows]
+    windows = {"15m": 900, "1h": 3600, "4h": 14400, "1d": 86400, "1w": 604800}
+    trends = {}
+    for label, seconds in windows.items():
+        target = now - seconds
+        prior = min(points, key=lambda p: abs(float(p["sampled_at"]) - target), default=None)
+        current_usdt = _as_float(current.get("usdt"))
+        if prior is None or abs(float(prior["sampled_at"]) - target) > max(600, seconds * 0.20) or current_usdt is None:
+            trends[label] = {"available": False, "change_pp": None, "direction": "insufficient_history"}
+            continue
+        delta = current_usdt - float(prior["usdt"])
+        trends[label] = {
+            "available": True, "change_pp": round(delta, 4),
+            "from_usdt_dominance": round(float(prior["usdt"]), 4),
+            "to_usdt_dominance": round(current_usdt, 4),
+            "direction": "rising" if delta > 0.03 else "falling" if delta < -0.03 else "flat",
+            "sample_age_seconds": round(now - float(prior["sampled_at"]))
+        }
+    available = [v for v in trends.values() if v.get("available")]
+    short = trends.get("1h", {})
+    medium = trends.get("4h", {})
+    long = trends.get("1d", {})
+    directions = [v.get("direction") for v in (short, medium, long) if v.get("available")]
+    rising = sum(1 for d in directions if d == "rising")
+    falling = sum(1 for d in directions if d == "falling")
+    if len(directions) < 2:
+        regime, confidence = "collecting_history", 0
+    elif rising >= 2:
+        regime, confidence = "defensive_pressure", round(100 * rising / len(directions))
+    elif falling >= 2:
+        regime, confidence = "risk_on_potential", round(100 * falling / len(directions))
+    else:
+        regime, confidence = "mixed_or_flat", 40
+    current_total = _as_float(current.get("total_market_cap_usd"))
+    current_usdt_cap = current_total * float(current["usdt"]) / 100 if current_total and current.get("usdt") is not None else None
+    return {
+        "history_samples": len(points), "history_started_at": (
+            datetime.fromtimestamp(float(points[0]["sampled_at"]), tz=timezone.utc).isoformat() if points else None
+        ),
+        "timeframes": trends, "regime": regime, "confidence": confidence,
+        "total_market_cap_usd": current_total, "usdt_market_cap_usd_estimate": current_usdt_cap,
+        "interpretation": (
+            "افزایش USDT.D می‌تواند از رشد ارزش بازار تتر یا افت کل بازار ناشی شود؛ کاهش آن نیز به‌تنهایی اثبات ورود پول نیست. "
+            "برای تشخیص ریسک‌گریزی/ریسک‌پذیری، تغییر ارزش کل بازار و ارزش بازار تتر هم کنار دامیننس بررسی می‌شود."
+        ),
+        "note": "تاریخچه از زمان فعال‌شدن این نسخه جمع می‌شود؛ تایم‌فریم‌های فاقد نمونه کافی عمداً سیگنال نمی‌دهند."
+    }
+
+
 @app.get("/api/dominance")
 def dominance():
     now = time.time()
@@ -1973,6 +2068,7 @@ def dominance():
         if cached and now - DOMINANCE_CACHE.get("at", 0) < 90:
             result = dict(cached)
             result["cache_hit"] = True
+            result["usdt_trend"] = _dominance_history_payload(result)
             return result
 
         errors = []
@@ -1981,7 +2077,9 @@ def dominance():
             raw = fetch_json("https://api.coingecko.com/api/v3/global", headers=headers, timeout=12)
             result = _build_dominance_payload("CoinGecko", raw)
             DOMINANCE_CACHE.update({"at": now, "data": result})
+            _record_dominance_snapshot(result, now)
             result["cache_hit"] = False
+            result["usdt_trend"] = _dominance_history_payload(result)
             return result
         except Exception as exc:
             errors.append("CoinGecko: " + str(exc)[:140])
@@ -1996,7 +2094,9 @@ def dominance():
                 result = _build_dominance_payload("CoinMarketCap", raw)
                 result["fallback_used"] = True
                 DOMINANCE_CACHE.update({"at": now, "data": result})
+                _record_dominance_snapshot(result, now)
                 result["cache_hit"] = False
+                result["usdt_trend"] = _dominance_history_payload(result)
                 return result
             except Exception as exc:
                 errors.append("CoinMarketCap: " + str(exc)[:140])
@@ -2007,6 +2107,7 @@ def dominance():
             result["cache_age_seconds"] = max(0, int(now - DOMINANCE_CACHE.get("at", now)))
             result["warning"] = "منبع دامیننس موقتاً پاسخ نداد؛ آخرین داده معتبر به‌صورت موقت نمایش داده می‌شود."
             result["errors"] = errors
+            result["usdt_trend"] = _dominance_history_payload(result)
             return result
 
     raise HTTPException(502, "داده دامیننس از منابع ارزش بازار دریافت نشد. " + " | ".join(errors))
