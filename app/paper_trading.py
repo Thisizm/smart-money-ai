@@ -350,7 +350,7 @@ def list_paper_trades(limit=100):
             "total": int(stats["total"] or 0), "active": int(stats["active"] or 0),
             "pending_entry": sum(1 for row in rows if row["status"] == "PENDING_ENTRY"),
             "tp1_touched": int(stats["tp1_touched"] or 0), "tp2": int(stats["tp2"] or 0),
-            "stopped": int(stats["stopped"] or 0), "closed": len(closed_r),
+            "stopped": int(stats["stopped"] or 0), "closed": int(stats["closed"] or 0),
             "win_rate_percent": round(wins / len(closed_r) * 100, 2) if closed_r else None,
             "net_r": round(sum(closed_r), 3),
             "open_pnl": open_pnl,
