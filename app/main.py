@@ -634,11 +634,16 @@ def get_crypto_derivatives(symbol):
                 errors.append(key + ": " + str(exc)[:100])
 
     funding_rows = values.get("funding") or []
-    funding = float(funding_rows[-1]["fundingRate"]) if funding_rows else None
-    oi_data = values.get("open_interest") or {}
     long_rows = values.get("long_short") or []
     taker_rows = values.get("taker_ratio") or []
+    funding_rows = funding_rows if isinstance(funding_rows, list) else []
+    long_rows = long_rows if isinstance(long_rows, list) else []
+    taker_rows = taker_rows if isinstance(taker_rows, list) else []
+    funding = float(funding_rows[-1]["fundingRate"]) if funding_rows and funding_rows[-1].get("fundingRate") is not None else None
+    oi_data = values.get("open_interest") or {}
+    oi_data = oi_data if isinstance(oi_data, dict) else {}
     depth = values.get("order_book") or {}
+    depth = depth if isinstance(depth, dict) else {}
     bids, asks = depth.get("bids", []), depth.get("asks", [])
     bid_qty = sum(float(row[1]) for row in bids) if bids else 0.0
     ask_qty = sum(float(row[1]) for row in asks) if asks else 0.0
