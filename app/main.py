@@ -639,14 +639,20 @@ def get_crypto_derivatives(symbol):
     funding_rows = funding_rows if isinstance(funding_rows, list) else []
     long_rows = long_rows if isinstance(long_rows, list) else []
     taker_rows = taker_rows if isinstance(taker_rows, list) else []
-    funding = float(funding_rows[-1]["fundingRate"]) if funding_rows and funding_rows[-1].get("fundingRate") is not None else None
+    def safe_float(value):
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    funding = safe_float(funding_rows[-1].get("fundingRate")) if funding_rows else None
     oi_data = values.get("open_interest") or {}
     oi_data = oi_data if isinstance(oi_data, dict) else {}
     depth = values.get("order_book") or {}
     depth = depth if isinstance(depth, dict) else {}
     bids, asks = depth.get("bids", []), depth.get("asks", [])
-    bid_qty = sum(float(row[1]) for row in bids) if bids else 0.0
-    ask_qty = sum(float(row[1]) for row in asks) if asks else 0.0
+    bid_qty = sum(safe_float(row[1]) or 0.0 for row in bids if len(row) > 1) if bids else 0.0
+    ask_qty = sum(safe_float(row[1]) or 0.0 for row in asks if len(row) > 1) if asks else 0.0
     total_qty = bid_qty + ask_qty
     imbalance = (bid_qty - ask_qty) / total_qty if total_qty > 0 else None
     spread_bps = None
@@ -660,9 +666,9 @@ def get_crypto_derivatives(symbol):
         "source": "Binance public USD-M futures metrics + spot order-book snapshot",
         "funding_rate": funding,
         "funding_rate_percent": funding * 100 if funding is not None else None,
-        "open_interest_contracts": float(oi_data["openInterest"]) if oi_data.get("openInterest") is not None else None,
-        "long_short_account_ratio": float(long_rows[-1]["longShortRatio"]) if long_rows else None,
-        "taker_buy_sell_ratio": float(taker_rows[-1]["buySellRatio"]) if taker_rows else None,
+        "open_interest_contracts": safe_float(oi_data.get("openInterest")),
+        "long_short_account_ratio": safe_float(long_rows[-1].get("longShortRatio")) if long_rows else None,
+        "taker_buy_sell_ratio": safe_float(taker_rows[-1].get("buySellRatio")) if taker_rows else None,
         "spot_orderbook_imbalance_top20": imbalance,
         "spot_spread_basis_points": spread_bps,
         "errors": errors,
@@ -893,7 +899,7 @@ def macro():
             "available": False, "source": "FRED",
             "message": "برای دریافت شاخص‌های رسمی اقتصاد آمریکا، FRED_API_KEY را در Render تنظیم کن.",
             "indicators": [],
-            "not_connected": ["ICE DXY exact index", "COT positioning", "Gold ETF flows", "Silver ETF flows", "central-bank gold purchases"]
+            "not_connected": ["ICE DXY exact index", "Gold ETF flows", "Silver ETF flows", "central-bank gold purchases"]
         }
     now = datetime.now(timezone.utc).timestamp()
     if MACRO_CACHE["data"] and now - MACRO_CACHE["at"] < 3600:
@@ -912,7 +918,7 @@ def macro():
     result = {
         "available": bool(indicators), "source": "Federal Reserve Economic Data (FRED)",
         "indicators": indicators, "errors": errors,
-        "not_connected": ["ICE DXY exact index", "COT positioning", "Gold ETF flows", "Silver ETF flows", "central-bank gold purchases"],
+        "not_connected": ["ICE DXY exact index", "Gold ETF flows", "Silver ETF flows", "central-bank gold purchases"],
         "updated_at": utc_now(),
         "note": "برخی شاخص‌ها با تأخیر منتشر می‌شوند؛ تاریخ هر مشاهده کنار مقدار آمده است."
     }
