@@ -176,7 +176,11 @@ def get_yahoo_metals_candles(market, timeframe):
     tickers = spot_tickers.get(market)
     if not tickers:
         raise RuntimeError("Unsupported metal market")
-    if ALLOW_METAL_FUTURES_PROXY:
+    # Silver has no Yahoo spot ticker. Try the COMEX continuous future as a
+    # clearly labelled last-resort proxy; this is not XAG/USD spot or Binance.
+    if market == "silver":
+        tickers = tickers + futures_tickers[market]
+    elif ALLOW_METAL_FUTURES_PROXY:
         tickers = tickers + futures_tickers[market]
 
     settings = {
@@ -290,48 +294,68 @@ def get_twelve_data_metals_candles(symbol, timeframe):
 
 
 def get_yahoo_metals_quote(market):
-    """No-key spot quote fallback from Yahoo Finance; may be delayed."""
-    ticker = {"gold": "XAUUSD=X", "silver": "XAGUSD=X"}.get(market)
-    if not ticker:
+    """No-key fallback: spot first, then a clearly labelled COMEX futures proxy."""
+    spot_tickers = {"gold": "XAUUSD=X", "silver": "XAGUSD=X"}
+    futures_tickers = {"gold": "GC=F", "silver": "SI=F"}
+    if market not in spot_tickers:
         raise RuntimeError("Unsupported Yahoo Finance metal")
-    url = (
-        "https://query1.finance.yahoo.com/v8/finance/chart/"
-        + urllib.parse.quote(ticker, safe="=")
-        + "?" + urllib.parse.urlencode({"range": "1d", "interval": "1m"})
-    )
-    data = fetch_json(url, headers={
-        "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (compatible; SmartMoneyAI/2.2)"
-    }, timeout=15)
-    chart = data.get("chart", {})
-    if chart.get("error"):
-        raise RuntimeError(str(chart["error"]))
-    result = (chart.get("result") or [None])[0]
-    if not result:
-        raise RuntimeError("Yahoo Finance returned no quote data for " + ticker)
-    meta = result.get("meta", {})
-    price = meta.get("regularMarketPrice")
-    stamp = meta.get("regularMarketTime")
-    if price is None:
-        quote = (result.get("indicators", {}).get("quote") or [{}])[0]
-        closes = [value for value in (quote.get("close") or []) if value is not None]
-        if closes:
-            price = closes[-1]
-            timestamps = result.get("timestamp") or []
-            stamp = timestamps[-1] if timestamps else stamp
-    if price is None:
-        raise RuntimeError("Yahoo Finance returned no usable price for " + ticker)
-    stamp = int(stamp or time.time())
-    return {
-        "available": True, "price": float(price),
-        "source": "Yahoo Finance spot quote",
-        "source_symbol": ticker,
-        "source_timestamp": datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat(),
-        "age_seconds": max(0, int(time.time() - stamp)),
-        "is_proxy": False,
-        "note": "قیمت مرجع اسپات از Yahoo Finance؛ ممکن است با تأخیر باشد و با فیدهای دیگر تفاوت داشته باشد."
-    }
 
+    tickers = [spot_tickers[market]]
+    # Yahoo Finance does not expose a usable XAGUSD=X symbol in this deployment.
+    # SI=F is a COMEX continuous futures proxy, not spot and not Binance TradFi.
+    if market == "silver" or ALLOW_METAL_FUTURES_PROXY:
+        tickers.append(futures_tickers[market])
+
+    errors = []
+    for ticker in tickers:
+        try:
+            url = (
+                "https://query1.finance.yahoo.com/v8/finance/chart/"
+                + urllib.parse.quote(ticker, safe="=")
+                + "?" + urllib.parse.urlencode({"range": "1d", "interval": "1m"})
+            )
+            data = fetch_json(url, headers={
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0 (compatible; SmartMoneyAI/2.2)"
+            }, timeout=15)
+            chart = data.get("chart", {})
+            if chart.get("error"):
+                raise RuntimeError(str(chart["error"]))
+            result = (chart.get("result") or [None])[0]
+            if not result:
+                raise RuntimeError("Yahoo Finance returned no quote data for " + ticker)
+            meta = result.get("meta", {})
+            price = meta.get("regularMarketPrice")
+            stamp = meta.get("regularMarketTime")
+            if price is None:
+                quote = (result.get("indicators", {}).get("quote") or [{}])[0]
+                closes = [value for value in (quote.get("close") or []) if value is not None]
+                if closes:
+                    price = closes[-1]
+                    timestamps = result.get("timestamp") or []
+                    stamp = timestamps[-1] if timestamps else stamp
+            if price is None:
+                raise RuntimeError("Yahoo Finance returned no usable price for " + ticker)
+
+            is_proxy = ticker in futures_tickers.values()
+            stamp = int(stamp or time.time())
+            return {
+                "available": True, "price": float(price),
+                "source": "Yahoo Finance COMEX futures quote" if is_proxy else "Yahoo Finance spot quote",
+                "source_symbol": ticker,
+                "source_timestamp": datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat(),
+                "age_seconds": max(0, int(time.time() - stamp)),
+                "is_proxy": is_proxy,
+                "note": (
+                    "هشدار: SI=F قرارداد آتی پیوسته COMEX و قیمت آن ممکن است با اسپات XAG/USD و قرارداد Binance تفاوت داشته باشد؛ داده Yahoo نیز با تأخیر است."
+                    if is_proxy else
+                    "قیمت مرجع اسپات از Yahoo Finance؛ ممکن است با تأخیر باشد و با فیدهای دیگر تفاوت داشته باشد."
+                )
+            }
+        except Exception as exc:
+            errors.append(ticker + ": " + str(exc)[:150])
+
+    raise RuntimeError("Yahoo Finance quote symbols failed: " + " | ".join(errors))
 
 def get_live_quote(market, symbol):
     """Fetch a separate live/last quote; candle analysis continues to use closed bars."""
