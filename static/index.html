@@ -49,7 +49,9 @@ body.chart-is-fullscreen{overflow:hidden}
  <div class="small">تحلیل مستقل روزانه و تأیید ۴ ساعته. امتیاز کیفیت احتمال برد نیست. این بخش معامله‌ای ثبت نمی‌کند.</div>
 </div>
 <div class="panel" id="op-chart-panel"><div class="chart-head"><b id="op-chart-title">نمودار تحلیل فرصت</b><span id="op-chart-source" class="small">یک ارز را برای دیدن نمودار انتخاب کن.</span></div>
- <div id="op-chart" style="width:100%;height:360px;direction:ltr"></div><div id="op-chart-legend" class="chart-legend"></div><div id="op-chart-details" class="small"></div>
+ <div class="row" style="align-items:end;margin:8px 0"><div class="field" style="max-width:190px"><label for="op-chart-timeframe">تایم‌فریم نمودار</label><select id="op-chart-timeframe" onchange="changeOpportunityChartTimeframe()"><option value="15m">۱۵ دقیقه</option><option value="1h">۱ ساعته</option><option value="4h">۴ ساعته</option><option value="1d" selected>روزانه</option><option value="1w">هفتگی</option></select></div><label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="op-chart-extra" onchange="redrawOpportunityChart()"> نمایش سطوح تکمیلی</label></div>
+ <div id="op-chart" style="width:100%;height:320px;direction:ltr"></div><div id="op-chart-legend" class="chart-legend"></div><div id="op-chart-details" class="small"></div>
+ <div class="chart-panel" style="margin-top:14px"><b>تصویر سناریوی تحلیل</b><div class="small">این تصویر از سطوح همین تحلیل ساخته می‌شود؛ مسیرها شرطی‌اند و پیش‌بینی قطعی نیستند.</div><div id="op-scenario-visual" style="width:100%;overflow:auto;margin-top:8px"></div></div>
 </div></section>
 <section id="ai" hidden><div class="panel"><h3>جمع‌بندی هوش مصنوعی</h3><p class="small">ابتدا تحلیل تکنیکال یا خبرها را دریافت کن. نیازمند AI_API_KEY در Render است و استفاده از API ممکن است هزینه داشته باشد.</p><button onclick="ai()">ساخت جمع‌بندی</button><div id="aistatus" class="muted"></div><pre id="aiout"></pre></div></section>
 <details class="panel" id="resources-panel"><summary style="cursor:pointer;font-weight:700">وضعیت منابع و اتصال‌ها — برای دیدن جزئیات بزن</summary><div id="providers" class="small" style="margin-top:12px">در حال بررسی…</div></details><div class="panel small">معامله خودکار خاموش است و سفارش واقعی ثبت نمی‌شود. کلیدهای API را فقط در Environment Variables در Render وارد کن، نه در چت یا کد عمومی. هیچ سیستم معاملاتی سود تضمینی ندارد.</div></main>
@@ -403,45 +405,79 @@ async function analyzeOpportunityAsset(){
  if(marketName==="gold")symbolName="XAUUSDT";if(marketName==="silver")symbolName="XAGUSDT";
  if(!symbolName){document.getElementById("op-asset-status").textContent="اول نام یا نماد ارز را وارد کن.";return}
  if(!symbolName.endsWith("USDT")&&marketName==="crypto")symbolName+="USDT";
- const status=document.getElementById("op-asset-status"),report=document.getElementById("op-asset-report");
- status.textContent="در حال دریافت داده و تحلیل هفتگی، روزانه، ۴ ساعته و یک‌ساعته "+symbolName+"…";report.innerHTML="";
- try{
-  const d=await get("/api/opportunity-asset?market="+encodeURIComponent(marketName)+"&symbol="+encodeURIComponent(symbolName));
-  opAssetResult=d;status.textContent="تحلیل دریافت شد | آخرین قیمت: "+opPrice(d.price)+" | منبع: "+(d.quote_source||d.candle_source||"نامشخص")+
-   (d.timeframe_errors&&Object.keys(d.timeframe_errors).length?" | بعضی تایم‌فریم‌ها داده ندادند: "+Object.keys(d.timeframe_errors).join(", "):"");
-  renderOpportunityAsset(d);
- }catch(e){status.textContent="تحلیل کامل انجام نشد: "+e.message+" | نماد را از نتایج جست‌وجو انتخاب کن."}
+ document.getElementById("op-asset-report").innerHTML="";
+ await loadOpportunityAsset(marketName,symbolName,document.getElementById("op-chart-timeframe").value||"1d");
 }
 function drawOpportunityAssetChart(d){
  const el=document.getElementById("op-chart"),legend=document.getElementById("op-chart-legend"),details=document.getElementById("op-chart-details");
  if(opportunityChart){opportunityChart.remove();opportunityChart=null}
  if(opportunityResizeObserver){opportunityResizeObserver.disconnect();opportunityResizeObserver=null}
  el.innerHTML="";
- if(!window.LightweightCharts||!d.chart_candles?.length){el.textContent="داده کندل برای رسم نمودار موجود نیست";return}
- opportunityChart=LightweightCharts.createChart(el,{width:Math.max(280,el.clientWidth||window.innerWidth-50),height:390,layout:{background:{color:"#0b172a"},textColor:"#cbd6e8",fontFamily:"Tahoma"},grid:{vertLines:{color:"#17253b"},horzLines:{color:"#17253b"}},rightPriceScale:{borderColor:"#405477"},timeScale:{borderColor:"#405477",timeVisible:true}});
+ const tf=document.getElementById("op-chart-timeframe");
+ if(tf)tf.value=d.chart_timeframe||"1d";
+ if(!window.LightweightCharts||!d.chart_candles?.length){el.textContent="داده کندل برای این تایم‌فریم موجود نیست";renderOpportunityScenario(d);return}
+ opportunityChart=LightweightCharts.createChart(el,{width:Math.max(280,el.clientWidth||window.innerWidth-50),height:320,layout:{background:{color:"#0b172a"},textColor:"#cbd6e8",fontFamily:"Tahoma"},grid:{vertLines:{color:"#17253b"},horzLines:{color:"#17253b"}},rightPriceScale:{borderColor:"#405477"},timeScale:{borderColor:"#405477",timeVisible:true},localization:{locale:"en-US"},handleScroll:true,handleScale:true});
  const cs=opportunityChart.addCandlestickSeries({upColor:"#28c997",downColor:"#ff7182",borderVisible:false,wickUpColor:"#28c997",wickDownColor:"#ff7182"});
  cs.setData(d.chart_candles);
  const L=d.levels||{},chips=[];
  const line=(v,c,t)=>{if(v==null||!Number.isFinite(Number(v)))return;cs.createPriceLine({price:Number(v),color:c,lineWidth:2,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:t});chips.push('<span class="legend-chip" style="border-color:'+c+'">'+opEscape(t)+' '+opPrice(v)+'</span>')};
- line(L.support,"#60a5fa","حمایت");line(L.resistance,"#f59e0b","مقاومت");line(L.bullish_breakout,"#28c997","شکست صعودی");line(L.bearish_breakdown,"#ff7182","شکست نزولی");
- if(L.long_entry_zone){line(L.long_entry_zone.low,"#34d399","کف ورود خرید");line(L.long_entry_zone.high,"#34d399","سقف ورود خرید")}
- line(L.long_stop,"#fb7185","حد ضرر خرید");
+ // فقط سطوح اصلی به‌صورت پیش‌فرض؛ نمودار شلوغ نمی‌شود.
+ if(L.long_entry_zone){line(L.long_entry_zone.low,"#38bdf8","کف ورود خرید");line(L.long_entry_zone.high,"#38bdf8","سقف ورود خرید")}
  if(L.short_entry_zone){line(L.short_entry_zone.low,"#fda4af","کف ورود فروش");line(L.short_entry_zone.high,"#fda4af","سقف ورود فروش")}
- line(L.short_stop,"#f43f5e","حد ضرر فروش");
- (L.long_targets||[]).forEach((v,i)=>line(v,"#34d399","هدف خرید "+(i+1)));
- (L.short_targets||[]).forEach((v,i)=>line(v,"#fda4af","هدف فروش "+(i+1)));
- if(L.fvg){line(L.fvg.low,"#38bdf8","FVG پایین");line(L.fvg.high,"#38bdf8","FVG بالا")}
- if(L.order_block){line(L.order_block.low,"#a78bfa","Order Block پایین");line(L.order_block.high,"#a78bfa","Order Block بالا")}
- line(L.liquidity_sweep_level,"#eab308","سوییپ نقدینگی");
- if(d.price!=null)line(d.price,"#e2e8f0","قیمت زنده/آخرین");
- const daily=d.daily_analysis||{};if(daily.chart_markers?.length)cs.setMarkers(daily.chart_markers);
+ line(L.long_stop,"#fb7185","حد ضرر خرید");line(L.short_stop,"#f43f5e","حد ضرر فروش");
+ (L.long_targets||[]).slice(0,2).forEach((v,i)=>line(v,"#34d399","هدف خرید "+(i+1)));
+ (L.short_targets||[]).slice(0,2).forEach((v,i)=>line(v,"#fda4af","هدف فروش "+(i+1)));
+ if(d.price!=null)line(d.price,"#e2e8f0","قیمت زنده");
+ if(document.getElementById("op-chart-extra")?.checked){
+  line(L.support,"#60a5fa","حمایت");line(L.resistance,"#f59e0b","مقاومت");
+  line(L.bullish_breakout?.trigger,"#28c997","تریگر شکست صعودی");
+  line(L.bearish_breakdown?.trigger,"#ff7182","تریگر شکست نزولی");
+  if(L.fvg){line(L.fvg.low,"#38bdf8","FVG پایین");line(L.fvg.high,"#38bdf8","FVG بالا")}
+  if(L.order_block){line(L.order_block.low,"#a78bfa","OB پایین");line(L.order_block.high,"#a78bfa","OB بالا")}
+  line(L.liquidity_sweep_level,"#eab308","سوییپ نقدینگی");
+ }
+ if(d.chart_markers?.length)cs.setMarkers(d.chart_markers);
  legend.innerHTML=chips.join("");
- details.textContent="ساختار: "+(daily.market_structure||"—")+" | BOS: "+(daily.bos||"—")+" | CHOCH: "+(daily.choch||"—")+" | RSI: "+(daily.rsi??"—")+" | داده قیمت زنده جدا از کندل بسته‌شده است.";
+ details.textContent="تایم‌فریم: "+(d.chart_timeframe||"1d")+" | کندل‌های نمایش‌داده‌شده: "+(d.chart_candle_count||d.chart_candles.length)+" | خطوط ورود و هدف از پلن روزانه‌اند؛ تایم‌فریم نمودار فقط نمایش کندل را تغییر می‌دهد.";
  opportunityChart.timeScale().fitContent();
  if(typeof ResizeObserver!=="undefined"){opportunityResizeObserver=new ResizeObserver(()=>{if(opportunityChart&&el.clientWidth>0)opportunityChart.applyOptions({width:el.clientWidth})});opportunityResizeObserver.observe(el)}
- document.getElementById("op-chart-panel").scrollIntoView({behavior:"smooth",block:"start"});
+ renderOpportunityScenario(d);
 }
-
+function renderOpportunityScenario(d){
+ const root=document.getElementById("op-scenario-visual");if(!root)return;
+ const L=d.levels||{},r=d.report||{};
+ const fmtv=v=>v==null?"—":opPrice(v);
+ const longEntry=L.long_entry_zone?fmtv(L.long_entry_zone.low)+" – "+fmtv(L.long_entry_zone.high):"ناحیه ورود معتبر ندارد";
+ const shortEntry=L.short_entry_zone?fmtv(L.short_entry_zone.low)+" – "+fmtv(L.short_entry_zone.high):"ناحیه ورود معتبر ندارد";
+ const longTargets=(L.long_targets||[]).slice(0,2).map(fmtv).join(" ← ")||"هدف ساختاری مشخص نیست";
+ const shortTargets=(L.short_targets||[]).slice(0,2).map(fmtv).join(" ← ")||"هدف ساختاری مشخص نیست";
+ root.innerHTML='<svg viewBox="0 0 760 300" role="img" aria-label="نمودار تصویری سناریوهای صعودی و نزولی" style="width:100%;min-width:520px;height:auto;background:#091426;border:1px solid #273653;border-radius:10px">'+
+ '<defs><marker id="opArrowUp" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6" fill="#28c997"/></marker><marker id="opArrowDn" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6" fill="#ff7182"/></marker></defs>'+
+ '<text x="710" y="28" fill="#dce7f7" font-size="17" text-anchor="end">سناریوهای مشروط '+opEscape(d.symbol||"")+'</text>'+
+ '<rect x="18" y="45" width="724" height="108" rx="10" fill="#10352f" stroke="#287c66"/><text x="720" y="70" fill="#65e0b3" font-size="16" text-anchor="end">سناریوی صعودی</text>'+
+ '<path d="M70 125 L210 110 L330 120 L455 78 L620 58" stroke="#28c997" stroke-width="4" fill="none" marker-end="url(#opArrowUp)"/>'+
+ '<text x="70" y="92" fill="#d8f5e9" font-size="12">ورود: '+opEscape(longEntry)+'</text><text x="720" y="96" fill="#d8f5e9" font-size="12" text-anchor="end">اهداف: '+opEscape(longTargets)+'</text><text x="70" y="143" fill="#ff9aa5" font-size="12">حد ضرر: '+fmtv(L.long_stop)+'</text>'+
+ '<rect x="18" y="166" width="724" height="108" rx="10" fill="#351c29" stroke="#884354"/><text x="720" y="191" fill="#ff9aa5" font-size="16" text-anchor="end">سناریوی نزولی</text>'+
+ '<path d="M70 207 L210 220 L330 210 L455 248 L620 260" stroke="#ff7182" stroke-width="4" fill="none" marker-end="url(#opArrowDn)"/>'+
+ '<text x="70" y="236" fill="#ffe2e5" font-size="12">ورود: '+opEscape(shortEntry)+'</text><text x="720" y="218" fill="#ffe2e5" font-size="12" text-anchor="end">اهداف: '+opEscape(shortTargets)+'</text><text x="70" y="265" fill="#ffb3bc" font-size="12">حد ضرر: '+fmtv(L.short_stop)+'</text></svg>'+
+ '<div class="small" style="margin-top:7px">صعود: '+opEscape(r.bullish_scenario||"تا زمان تأیید شکست، فقط سناریوی احتمالی است.")+'<br>نزول: '+opEscape(r.bearish_scenario||"تا زمان تأیید شکست، فقط سناریوی احتمالی است.")+'</div>';
+}
+async function changeOpportunityChartTimeframe(){
+ if(!opAssetResult)return;
+ const tf=document.getElementById("op-chart-timeframe").value;
+ await loadOpportunityAsset(opAssetResult.market,opAssetResult.symbol,tf);
+}
+function redrawOpportunityChart(){if(opAssetResult)drawOpportunityAssetChart(opAssetResult)}
+async function loadOpportunityAsset(marketName,symbolName,timeframe){
+ const status=document.getElementById("op-asset-status"),report=document.getElementById("op-asset-report");
+ status.textContent="در حال دریافت داده و تحلیل "+symbolName+" | نمودار "+timeframe+"…";
+ try{
+  const d=await get("/api/opportunity-asset?market="+encodeURIComponent(marketName)+"&symbol="+encodeURIComponent(symbolName)+"&timeframe="+encodeURIComponent(timeframe||"1d"));
+  opAssetResult=d;status.textContent="تحلیل دریافت شد | آخرین قیمت: "+opPrice(d.price)+" | تایم‌فریم نمودار: "+d.chart_timeframe+" | منبع: "+(d.quote_source||d.candle_source||"نامشخص")+
+   (d.timeframe_errors&&Object.keys(d.timeframe_errors).length?" | بعضی تایم‌فریم‌ها داده ندادند: "+Object.keys(d.timeframe_errors).join(", "):"");
+  renderOpportunityAsset(d);
+ }catch(e){status.textContent="تحلیل کامل انجام نشد: "+e.message}
+}
 function opCard(x){
  const stateColor=x.state==="CONFIRMED_SETUP"?"#28c997":(x.state==="WAITING_FOR_TRIGGER"||x.state==="DEVELOPING"||x.state==="WATCHLIST")?"#f0bd55":"#93a4bd";
  const side=x.side==="long"?"خرید":x.side==="short"?"فروش":"نامشخص";
@@ -478,39 +514,12 @@ async function loadOpportunities(force){
   status.textContent="آخرین اسکن: "+new Date(d.updated_at).toLocaleString("fa-IR")+" | "+opEscape(d.method||"منابع بازار")+(d.cache_hit?" | داده کش‌شده":" | داده تازه")+". "+opEscape(d.disclaimer||"");
  }catch(e){status.textContent="خطا در اسکن فرصت‌ها: "+e.message}
 }
-function showOpportunityChart(marketName,symbolName){
- const x=opportunityCache.find(v=>v.market===marketName&&v.symbol===symbolName);
- const el=document.getElementById("op-chart"),legend=document.getElementById("op-chart-legend"),details=document.getElementById("op-chart-details");
- if(!x||!el)return;
- document.getElementById("op-chart-title").textContent=x.symbol+" | نمودار روزانه و پلن ساختاری";
- document.getElementById("op-chart-source").textContent="منبع کندل: "+(x.candle_source||"نامشخص")+" | زمان آخرین کندل: "+(x.last_candle_time?new Date(x.last_candle_time).toLocaleString("fa-IR"):"—");
- if(opportunityChart){opportunityChart.remove();opportunityChart=null}
- if(opportunityResizeObserver){opportunityResizeObserver.disconnect();opportunityResizeObserver=null}
- el.innerHTML="";
- if(!window.LightweightCharts||!Array.isArray(x.chart_candles)||!x.chart_candles.length){el.textContent="کندل برای رسم نمودار موجود نیست";return}
- opportunityChart=LightweightCharts.createChart(el,{width:Math.max(280,el.clientWidth||window.innerWidth-50),height:360,layout:{background:{color:"#0b172a"},textColor:"#cbd6e8",fontFamily:"Tahoma"},grid:{vertLines:{color:"#17253b"},horzLines:{color:"#17253b"}},rightPriceScale:{borderColor:"#405477"},timeScale:{borderColor:"#405477",timeVisible:true},localization:{locale:"en-US"}});
- const cs=opportunityChart.addCandlestickSeries({upColor:"#28c997",downColor:"#ff7182",borderVisible:false,wickUpColor:"#28c997",wickDownColor:"#ff7182"});
- cs.setData(x.chart_candles);
- const L=x.levels||{},items=[];
- const add=(v,color,label)=>{if(v==null||!Number.isFinite(Number(v)))return;cs.createPriceLine({price:Number(v),color,lineWidth:2,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:label});items.push('<span class="legend-chip" style="border-color:'+color+'">'+label+' '+opNum(v)+'</span>')};
- if(L.entry_zone){add(L.entry_zone.low,"#38bdf8","کف محدوده ورود");add(L.entry_zone.high,"#38bdf8","سقف محدوده ورود")}
- add(L.entry,"#facc15","تریگر ورود");add(L.stop_loss,"#fb7185","حد ضرر");add(L.invalidation,"#f43f5e","ابطال تحلیل");
- add(L.support,"#60a5fa","حمایت");add(L.resistance,"#f59e0b","مقاومت");add(L.breakout_trigger,"#c084fc","تریگر شکست");
- if(x.fvg_zone){add(x.fvg_zone.low,"#38bdf8","کف FVG");add(x.fvg_zone.high,"#38bdf8","سقف FVG")}
- if(x.order_block){add(x.order_block.low,"#a78bfa","کف Order Block");add(x.order_block.high,"#a78bfa","سقف Order Block")}
- add(x.liquidity_sweep_level,"#eab308","سطح سوییپ نقدینگی");
- (L.targets||[]).forEach((v,i)=>add(v,"#34d399","هدف "+(i+1)));
- if(x.price!=null)add(x.price,"#e2e8f0","قیمت زنده/آخرین");
- if(x.chart_markers?.length)cs.setMarkers(x.chart_markers);
- legend.innerHTML=items.join("");
- details.textContent="وضعیت: "+x.state_label+" | ساختار: "+(x.market_structure||"—")+" | FVG: "+(x.fvg_zone?opNum(x.fvg_zone.low)+" تا "+opNum(x.fvg_zone.high):"ندارد")+
- " | Order Block: "+(x.order_block?opNum(x.order_block.low)+" تا "+opNum(x.order_block.high):"تأیید نشده")+
- " | سوییپ نقدینگی: "+(x.liquidity_sweep||"—")+
- " | "+(x.targets_note||"")+
- " | هشدار: نمودار بر اساس کندل روزانه بسته‌شده است؛ قیمت زنده ممکن است با آخرین کندل تفاوت داشته باشد.";
- opportunityChart.timeScale().fitContent();
- if(typeof ResizeObserver!=="undefined"){opportunityResizeObserver=new ResizeObserver(()=>{if(opportunityChart&&el.clientWidth>0)opportunityChart.applyOptions({width:el.clientWidth})});opportunityResizeObserver.observe(el)}
+async function showOpportunityChart(marketName,symbolName){
+ const x=opportunityCache.find(v=>v.market===marketName&&v.symbol===symbolName);if(!x)return;
+ document.getElementById("op-search-market").value=marketName;
+ document.getElementById("op-search-input").value=symbolName;
  document.getElementById("op-chart-panel").scrollIntoView({behavior:"smooth",block:"start"});
+ await loadOpportunityAsset(marketName,symbolName,document.getElementById("op-chart-timeframe").value||"1d");
 }
 
 async function ai(){aistatus.textContent="در حال پردازش…";if(!lastA&&!lastC){aistatus.textContent="اول تحلیل یا خبرها را دریافت کن";return}try{let mtfData=null;if(lastA&&!lastA.quote_only){try{mtfData=await get("/api/multi-timeframe?market="+market.value+"&symbol="+encodeURIComponent(symbol.value))}catch(e){}}let cal=null;try{cal=await get("/api/economic-calendar")}catch(e){}let d=await get("/api/ai-synthesis",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({technical:lastA,market_context:lastC,correlations:lastCorr,multi_timeframe:mtfData,economic_calendar:cal})});aiout.textContent=d.analysis;aistatus.textContent="آماده شد | "+(d.provider||d.model||"AI")}catch(e){aistatus.textContent="خطا: "+e.message}}
