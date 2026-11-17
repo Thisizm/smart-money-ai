@@ -10,7 +10,26 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 
-DB_PATH = os.getenv("DATABASE_PATH", os.path.join(os.path.dirname(os.path.dirname(__file__)), "alerts.db"))
+def _database_path():
+    configured = os.getenv("DATABASE_PATH")
+    if configured:
+        return configured
+    root_dir = os.path.dirname(os.path.dirname(__file__))
+    persistent_dir = os.getenv("PERSISTENT_DATA_DIR", "/var/data")
+    if os.path.isdir(persistent_dir) and os.access(persistent_dir, os.W_OK):
+        persistent_path = os.path.join(persistent_dir, "alerts.db")
+        legacy_path = os.path.join(root_dir, "alerts.db")
+        if not os.path.exists(persistent_path) and os.path.exists(legacy_path):
+            try:
+                import shutil
+                shutil.copy2(legacy_path, persistent_path)
+            except OSError:
+                pass
+        return persistent_path
+    return os.path.join(root_dir, "alerts.db")
+
+
+DB_PATH = _database_path()
 _LOCK = threading.RLock()
 
 
@@ -309,7 +328,7 @@ def list_paper_trades(limit=100):
     limit = max(1, min(int(limit), 300))
     with _LOCK, _connect() as con:
         rows = [dict(r) for r in con.execute(
-            "SELECT * FROM paper_trades ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM paper_trades ORDER BY COALESCE(closed_at, created_at) DESC, id DESC LIMIT ?", (limit,)
         ).fetchall()]
         stats = con.execute("""
             SELECT COUNT(*) AS total,
@@ -317,7 +336,7 @@ def list_paper_trades(limit=100):
                    SUM(CASE WHEN status IN ('TP1_HIT','TP2_HIT','SL_HIT','SL_AFTER_TP1') THEN 1 ELSE 0 END) AS tp1_touched,
                    SUM(CASE WHEN status='TP2_HIT' THEN 1 ELSE 0 END) AS tp2,
                    SUM(CASE WHEN status IN ('SL_HIT','SL_AFTER_TP1') THEN 1 ELSE 0 END) AS stopped,
-                   SUM(CASE WHEN status IN ('TP2_HIT','SL_HIT','SL_AFTER_TP1','MANUAL_CLOSED') THEN 1 ELSE 0 END) AS closed
+                   SUM(CASE WHEN status IN ('TP2_HIT','SL_HIT','SL_AFTER_TP1','MANUAL_CLOSED','INVALIDATED_BEFORE_ENTRY') THEN 1 ELSE 0 END) AS closed
             FROM paper_trades
         """).fetchone()
         closed_rows = con.execute("""
@@ -344,8 +363,14 @@ def list_paper_trades(limit=100):
     wins = sum(1 for x in closed_r if x > 0)
     open_pnl = round(sum(float(row.get("total_pnl") or 0) for row in rows
                          if row.get("status") in ("ACTIVE", "TP1_HIT")), 4)
+    active_statuses = {"PENDING_ENTRY", "ACTIVE", "TP1_HIT"}
+    active_trades = [row for row in rows if row.get("status") in active_statuses]
+    history_trades = [row for row in rows if row.get("status") not in active_statuses]
+    history_trades.sort(key=lambda row: (row.get("closed_at") or row.get("updated_at") or row.get("created_at") or ""), reverse=True)
     return {
         "available": True, "mode": "PAPER_ONLY",
+        "active_trades": active_trades,
+        "history_trades": history_trades,
         "stats": {
             "total": int(stats["total"] or 0), "active": int(stats["active"] or 0),
             "pending_entry": sum(1 for row in rows if row["status"] == "PENDING_ENTRY"),
