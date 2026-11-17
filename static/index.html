@@ -177,8 +177,8 @@ function showA(d){
  metric("BOS",d.bos)+metric("CHOCH",d.choch)+metric("FVG",d.fvg);
  document.getElementById("reasons").innerHTML=(d.analysis||[]).map(x=>"<li>"+x+"</li>").join("");
  let details=[];
- const ob=d.order_block_approx||{},der=d.derivatives||{},risk=d.risk_management||{},a=d.advanced_analysis||{},vp=a.volume_profile||{},pd=a.premium_discount||{},macd=a.macd||{};
- details.push('<div class="item"><b>ساختار:</b> '+(d.market_structure||"—")+' | <b>OB:</b> '+(ob.type||"ندارد")+' '+(ob.low==null?"":fmt(ob.low)+" تا "+fmt(ob.high))+' | <b>FVG:</b> '+(d.fvg||"—")+'</div>');
+ const obApprox=d.order_block_approx||{},der=d.derivatives||{},risk=d.risk_management||{},a=d.advanced_analysis||{},vp=a.volume_profile||{},pd=a.premium_discount||{},macd=a.macd||{};
+ details.push('<div class="item"><b>ساختار:</b> '+(d.market_structure||"—")+' | <b>OB:</b> '+(obApprox.type||"ندارد")+' '+(obApprox.low==null?"":fmt(obApprox.low)+" تا "+fmt(obApprox.high))+' | <b>FVG:</b> '+(d.fvg||"—")+'</div>');
  details.push('<div class="item"><b>تأییدها:</b> ADX '+fmt((a.adx||{}).value)+' | MACD '+fmt(macd.histogram)+' | حجم نسبی '+fmt((a.momentum||{}).relative_volume)+'x | POC '+fmt(vp.poc)+' | ناحیه '+(pd.zone||"—")+'</div>');
  if(market.value==="crypto")details.push('<div class="item"><b>مشتقات:</b> Funding '+fmt(der.funding_rate_percent)+'% | OI '+fmt(der.open_interest_contracts)+' | نسبت لانگ/شورت '+fmt(der.long_short_account_ratio)+'</div>');
  details.push('<div class="item"><b>ریسک:</b> '+(risk.risk_gate_passed===false?"ورود مسدود":"فیلتر اولیه عبور کرده")+(risk.risk_flags&&risk.risk_flags.length?" | "+risk.risk_flags.join("؛ "):"")+'</div>');
