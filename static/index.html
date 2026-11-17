@@ -122,7 +122,7 @@ async function openSmartPaperTrade(){
  const status=document.getElementById("smart-entry-action-status");
  status.textContent="در حال بررسی دوباره قیمت و شرایط ورود روی سرور…";
  try{
-  const url="/api/paper-trading/open?market="+encodeURIComponent(currentAnalysisMarket)+"&symbol="+encodeURIComponent(currentAnalysisSymbol)+"&timeframe="+encodeURIComponent(tf.value);
+  const url="/api/paper-trading/open?market="+encodeURIComponent(currentAnalysisMarket)+"&symbol="+encodeURIComponent(currentAnalysisSymbol)+"&timeframe="+encodeURIComponent(lastA?.timeframe||tf.value);
   const result=await get(url,{method:"POST"});
   status.textContent="معامله آزمایشی با موفقیت و فقط با درخواست تو ثبت شد. وضعیت: "+(result.paper_trade?.status||"ثبت شد");
   refreshPaperTrading();
@@ -138,6 +138,8 @@ function renderSmartEntry(d){
  }
  const side=p.preferred_side==="long"?"خرید":p.preferred_side==="short"?"فروش":"نامشخص";
  const plan=p.preferred_side==="long"?p.long:p.preferred_side==="short"?p.short:null;
+ const signalSide=d.signal==="BUY"?"long":d.signal==="SELL"?"short":null;
+ if(!signalSide||signalSide!==p.preferred_side){el.innerHTML='<b>جهت اصلی هنوز تأیید نشده</b><div class="small">برای این تحلیل سیگنال خرید یا فروش هم‌جهت با ورود هوشمند وجود ندارد؛ معامله‌ای ثبت نمی‌شود.</div>';return;}
  const blocked=!p.risk_gate_passed;
  if(blocked){el.innerHTML='<b>ورود فعلاً مسدود است</b><div class="small">'+((p.risk_flags||[]).join("؛ ")||"فیلتر ریسک اجازه ورود نمی‌دهد.")+'</div>';return;}
  if(!plan||!plan.available||!plan.zone){el.innerHTML='<b>محدوده معتبر پیدا نشد</b><div class="small">برای این تحلیل نقطه ورود هوشمند قابل اتکا وجود ندارد؛ معامله‌ای ثبت نمی‌شود.</div>';return;}
@@ -224,7 +226,8 @@ function renderChart(d){
  if(smartEntryEnabled){
   const smart=d.smart_entry||{},side=smart.preferred_side;
   const plan=side==="long"?smart.long:side==="short"?smart.short:null;
-  if(smart.risk_gate_passed&&plan&&plan.available&&plan.zone){
+  const signalSide=d.signal==="BUY"?"long":d.signal==="SELL"?"short":null;
+  if(side===signalSide&&smart.risk_gate_passed&&plan&&plan.available&&plan.zone){
    line(plan.zone.low,"#38bdf8","کف ورود هوشمند",dashed,2,true);
    line(plan.zone.high,"#38bdf8","سقف ورود هوشمند",dashed,2,true);
    line(plan.entry,"#facc15","تریگر ورود هوشمند",LightweightCharts.LineStyle.Solid,2,true);
