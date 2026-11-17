@@ -119,6 +119,21 @@ class AdvancedAnalysisTests(unittest.TestCase):
         self.assertIn("risk_gate_passed", result["risk_management"])
         self.assertIn("advanced_analysis", result)
 
+    def test_smart_entry_plan_is_returned_for_both_directions(self):
+        result = analyze(sample_candles(), "crypto", "BTCUSDT", "1d")
+        self.assertIn("smart_entry", result)
+        self.assertIn("long", result["smart_entry"])
+        self.assertIn("short", result["smart_entry"])
+        self.assertIn(result["smart_entry"]["preferred_side"], ("long", "short", "neutral"))
+        for side in ("long", "short"):
+            plan = result["smart_entry"][side]
+            self.assertIn("available", plan)
+            if plan["available"]:
+                self.assertLessEqual(plan["zone"]["low"], plan["zone"]["high"])
+                self.assertGreater(plan["stop_loss"], 0)
+                self.assertEqual(len(plan["targets"]), 3)
+                self.assertIn(plan["status"], ("CONFIRMED_ON_CLOSED_CANDLE", "WAIT_FOR_PULLBACK_CONFIRMATION"))
+
     def test_pearson_correlation(self):
         result = pearson_correlation([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], [2, 4, 6, 8, 10, 12, 14, 16, 18, 20])
         self.assertAlmostEqual(result, 1.0, places=6)
