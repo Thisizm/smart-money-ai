@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .pro_analysis import advanced_analysis
+from .intelligence_engine import assess_hidden_intelligence, apply_intelligence_gate
 from .backtesting import run_research_backtest
 from .paper_trading import init_paper_db, record_signal, monitor_open_trades, list_paper_trades, close_paper_trade
 
@@ -1162,7 +1163,7 @@ def analyze(candles, market, symbol, timeframe):
         "direction_rule": "هم‌جهت با سیگنال اصلی؛ وقتی سیگنال اصلی WAIT است ورود هوشمند جهت مستقل و قابل معامله صادر نمی‌کند.",
         "note": "جهت ترجیحی از سیگنال نهایی و سوگیری تحلیل گرفته شده است؛ فیلتر ریسک مسدود یعنی ورود مجاز نیست. ناحیه‌ها تخمینی‌اند و امتیازها احتمال آماری موفقیت نیستند."
     }
-    return {
+    result = {
         "market": market, "symbol": symbol, "timeframe": timeframe,
         "signal": direction, "bias": bias,
         "setup_score": setup_score, "bull_score": bull, "bear_score": bear,
@@ -1207,6 +1208,10 @@ def analyze(candles, market, symbol, timeframe):
         },
         "updated_at": utc_now()
     }
+    base_assessment = assess_hidden_intelligence(market, result)
+    apply_intelligence_gate(result, base_assessment)
+    return result
+
 @app.get("/", response_class=HTMLResponse)
 def home():
     path = os.path.join(ROOT_DIR, "static", "index.html")
@@ -1263,6 +1268,7 @@ def options():
 
 
 DERIVATIVES_CACHE = {}
+OI_SAMPLE_HISTORY = {}
 
 
 def get_crypto_derivatives(symbol):
@@ -1277,10 +1283,11 @@ def get_crypto_derivatives(symbol):
         "open_interest": "https://fapi.binance.com/fapi/v1/openInterest?symbol=" + base,
         "long_short": "https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=" + base + "&period=1h&limit=1",
         "taker_ratio": "https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=" + base + "&period=1h&limit=1",
-        "order_book": "https://data-api.binance.vision/api/v3/depth?symbol=" + base + "&limit=20"
+        "order_book": "https://data-api.binance.vision/api/v3/depth?symbol=" + base + "&limit=20",
+        "agg_trades": "https://data-api.binance.vision/api/v3/aggTrades?symbol=" + base + "&limit=500"
     }
     values, errors = {}, []
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         futures = {pool.submit(fetch_json, url, None, 7): key for key, url in urls.items()}
         for future in as_completed(futures):
             key = futures[future]
@@ -1304,6 +1311,15 @@ def get_crypto_derivatives(symbol):
     funding = safe_float(funding_rows[-1].get("fundingRate")) if funding_rows else None
     oi_data = values.get("open_interest") or {}
     oi_data = oi_data if isinstance(oi_data, dict) else {}
+    oi_value = safe_float(oi_data.get("openInterest"))
+    oi_change_pct_5m = None
+    previous_oi = OI_SAMPLE_HISTORY.get(symbol)
+    if oi_value is not None and oi_value > 0:
+        if previous_oi and now - previous_oi.get("at", 0) >= 300 and previous_oi.get("value"):
+            oi_change_pct_5m = (oi_value / previous_oi["value"] - 1.0) * 100.0
+            OI_SAMPLE_HISTORY[symbol] = {"at": now, "value": oi_value}
+        elif not previous_oi:
+            OI_SAMPLE_HISTORY[symbol] = {"at": now, "value": oi_value}
     depth = values.get("order_book") or {}
     depth = depth if isinstance(depth, dict) else {}
     bids, asks = depth.get("bids", []), depth.get("asks", [])
@@ -1317,12 +1333,33 @@ def get_crypto_derivatives(symbol):
         mid = (bid + ask) / 2.0
         spread_bps = ((ask - bid) / mid * 10000.0) if mid else None
 
+    # Binance aggregate trades expose aggressor-side information. This is a
+    # recent-sample delta proxy, not a full-session or institutional CVD feed.
+    agg_rows = values.get("agg_trades") or []
+    buy_quote = sell_quote = 0.0
+    agg_count = 0
+    for trade in (agg_rows if isinstance(agg_rows, list) else []):
+        trade_price = safe_float(trade.get("p"))
+        trade_qty = safe_float(trade.get("q"))
+        if trade_price is None or trade_qty is None or trade_price <= 0 or trade_qty <= 0:
+            continue
+        notional = trade_price * trade_qty
+        if trade.get("m") is True:
+            sell_quote += notional
+        else:
+            buy_quote += notional
+        agg_count += 1
+    total_aggressor_quote = buy_quote + sell_quote
+    cvd_delta_percent = ((buy_quote - sell_quote) / total_aggressor_quote * 100.0) if total_aggressor_quote > 0 else None
+    cvd_quote_delta = buy_quote - sell_quote if total_aggressor_quote > 0 else None
     metric_status = {
         "funding": funding is not None,
-        "open_interest": safe_float(oi_data.get("openInterest")) is not None,
+        "open_interest": oi_value is not None,
+        "open_interest_change_5m": oi_change_pct_5m is not None,
         "long_short": bool(long_rows),
         "taker_ratio": bool(taker_rows),
         "spot_order_book": bool(bids and asks),
+        "recent_trade_delta_proxy": agg_count > 0,
     }
     result = {
         # A spot order-book response alone must not imply futures data is available.
@@ -1332,13 +1369,20 @@ def get_crypto_derivatives(symbol):
         "source": "Binance public USD-M futures metrics + separate spot order-book snapshot",
         "funding_rate": funding,
         "funding_rate_percent": funding * 100 if funding is not None else None,
-        "open_interest_contracts": safe_float(oi_data.get("openInterest")),
+        "open_interest_contracts": oi_value,
+        "open_interest_change_pct_5m": oi_change_pct_5m,
+        "cvd_buy_quote": buy_quote if agg_count else None,
+        "cvd_sell_quote": sell_quote if agg_count else None,
+        "cvd_quote_delta": cvd_quote_delta,
+        "cvd_delta_percent": cvd_delta_percent,
+        "cvd_trade_count": agg_count,
+        "cvd_source": "Binance Spot aggregate trades; last up to 500 aggregated trades",
         "long_short_account_ratio": safe_float(long_rows[-1].get("longShortRatio")) if long_rows else None,
         "taker_buy_sell_ratio": safe_float(taker_rows[-1].get("buySellRatio")) if taker_rows else None,
         "spot_orderbook_imbalance_top20": imbalance,
         "spot_spread_basis_points": spread_bps,
         "errors": errors,
-        "note": "فاندینگ و OI مشتقات عمومی‌اند؛ نسبت لانگ/شورت تعداد حساب‌هاست. دفتر سفارش فقط snapshot اسپات است، نه جریان سفارش تاریخی یا سفارش نهادی."
+        "note": "Funding و OI از Binance USD-M هستند؛ تغییر OI فقط پس از دو نمونه با فاصله حداقل ۵ دقیقه محاسبه می‌شود. دلتا از سمت تهاجمی آخرین حداکثر ۵۰۰ معامله تجمیعی اسپات تخمین زده شده و CVD کامل تایم‌فریم یا جریان نهادی نیست. دفتر سفارش فقط snapshot لحظه‌ای است."
     }
     DERIVATIVES_CACHE[symbol] = {"at": now, "data": result}
     return result
@@ -1479,6 +1523,25 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
         result["external_confirmation"] = get_marginpad_screener_confirmation(symbol)
     else:
         result["external_confirmation"] = {"available": False, "source": "MarginPad", "note": "اسکنر مشتقات MarginPad فقط برای کریپتو است."}
+
+    # Macro/news/COT and dominance are contextual risk inputs. A single headline
+    # or one dominance snapshot is never converted into a directional signal.
+    try:
+        intelligence_context = market_context(market)
+    except Exception as exc:
+        intelligence_context = {"available": False, "error": str(exc)[:160]}
+    dominance_data = {"available": False, "note": "برای فلزات کاربرد ندارد."}
+    if market == "crypto":
+        try:
+            dominance_data = dominance()
+        except Exception as exc:
+            dominance_data = {"available": False, "error": str(exc)[:160]}
+    intelligence = assess_hidden_intelligence(
+        market, result, result.get("derivatives"), dominance_data,
+        intelligence_context, result.get("economic_event_risk")
+    )
+    apply_intelligence_gate(result, intelligence)
+
     chart_limit = max(300, min(int(os.getenv("CHART_CANDLE_LIMIT", "1500")), 3000))
     chart_bars = completed_candles(candles, timeframe)[-chart_limit:]
     result["chart_candles"] = [{
