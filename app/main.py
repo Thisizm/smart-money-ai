@@ -733,6 +733,85 @@ def multi_timeframe(market: str = "crypto", symbol: str = "BTCUSDT"):
     }
 
 
+CORRELATION_CACHE = {"at": 0, "data": None}
+
+
+def pearson_correlation(xs, ys):
+    if len(xs) != len(ys) or len(xs) < 10:
+        return None
+    mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+    dx = [x - mx for x in xs]
+    dy = [y - my for y in ys]
+    denom = (sum(x * x for x in dx) * sum(y * y for y in dy)) ** 0.5
+    return sum(x * y for x, y in zip(dx, dy)) / denom if denom > 0 else None
+
+
+@app.get("/api/correlations")
+def correlations():
+    now = time.time()
+    if CORRELATION_CACHE["data"] and now - CORRELATION_CACHE["at"] < 900:
+        return CORRELATION_CACHE["data"]
+
+    instruments = {
+        "BTC": ("crypto", "BTCUSDT"),
+        "ETH": ("crypto", "ETHUSDT"),
+        "GOLD": ("gold", METALS["gold"]),
+        "SILVER": ("silver", METALS["silver"])
+    }
+    closes_by_asset, errors = {}, []
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        future_map = {
+            pool.submit(get_candles, market, symbol, "1d"): key
+            for key, (market, symbol) in instruments.items()
+        }
+        for future in as_completed(future_map):
+            key = future_map[future]
+            try:
+                candles = completed_candles(future.result(), "1d")
+                closes = {}
+                for candle in candles:
+                    day = datetime.fromtimestamp(candle["time"] / 1000, tz=timezone.utc).date().isoformat()
+                    closes[day] = candle["close"]
+                closes_by_asset[key] = closes
+            except Exception as exc:
+                errors.append(key + ": " + str(exc)[:120])
+
+    returns_by_asset = {}
+    for key, closes in closes_by_asset.items():
+        dates = sorted(closes)
+        returns_by_asset[key] = {
+            dates[i]: math.log(closes[dates[i]] / closes[dates[i - 1]])
+            for i in range(1, len(dates))
+            if closes[dates[i]] > 0 and closes[dates[i - 1]] > 0
+        }
+
+    pairs = (("BTC", "ETH"), ("BTC", "GOLD"), ("BTC", "SILVER"),
+             ("ETH", "GOLD"), ("ETH", "SILVER"), ("GOLD", "SILVER"))
+    results = []
+    for left, right in pairs:
+        common = sorted(set(returns_by_asset.get(left, {})) & set(returns_by_asset.get(right, {})))
+        pair_data = {"pair": left + "/" + right, "observations": len(common)}
+        for window in (30, 90):
+            dates = common[-window:]
+            value = pearson_correlation(
+                [returns_by_asset[left][d] for d in dates],
+                [returns_by_asset[right][d] for d in dates]
+            )
+            pair_data["correlation_" + str(window) + "d"] = round(value, 3) if value is not None else None
+        results.append(pair_data)
+
+    result = {
+        "available": bool(results),
+        "source": "Binance daily candles + Yahoo Finance/Twelve Data metals daily candles",
+        "pairs": results,
+        "errors": errors,
+        "updated_at": utc_now(),
+        "note": "همبستگی از بازده لگاریتمی روزانه و تاریخ‌های مشترک محاسبه شده؛ رابطه ثابت یا علیت نیست و در رژیم‌های مختلف تغییر می‌کند."
+    }
+    CORRELATION_CACHE.update({"at": now, "data": result})
+    return result
+
+
 @app.get("/api/dominance")
 def dominance():
     headers = {"x-cg-demo-api-key": COINGECKO_API_KEY} if COINGECKO_API_KEY else {}
