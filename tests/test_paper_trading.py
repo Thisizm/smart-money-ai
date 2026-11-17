@@ -69,6 +69,27 @@ class PaperTradingTests(unittest.TestCase):
         self.assertEqual(trade["status"], "TP2_HIT")
         self.assertGreater(trade["realized_r"], 0)
 
+
+    def test_virtual_position_has_auto_leverage_and_live_pnl(self):
+        paper_trading.record_signal(self.sample_signal())
+        paper_trading.monitor_open_trades(
+            lambda market, symbol: {"available": True, "price": 100.0,
+                                    "age_seconds": 1, "is_proxy": False}
+        )
+        trade = paper_trading.list_paper_trades()["trades"][0]
+        self.assertEqual(trade["status"], "ACTIVE")
+        self.assertGreater(trade["quantity"], 0)
+        self.assertGreaterEqual(trade["leverage"], 1)
+        self.assertLessEqual(trade["leverage"], 5)
+        self.assertGreater(trade["margin_used"], 0)
+        paper_trading.monitor_open_trades(
+            lambda market, symbol: {"available": True, "price": 101.0,
+                                    "age_seconds": 1, "is_proxy": False}
+        )
+        trade = paper_trading.list_paper_trades()["trades"][0]
+        self.assertGreater(trade["unrealized_pnl"], 0)
+        self.assertGreater(trade["total_pnl"], 0)
+
     def test_stop_loss_closes_trade_as_loss(self):
         paper_trading.record_signal(self.sample_signal())
         paper_trading.monitor_open_trades(
