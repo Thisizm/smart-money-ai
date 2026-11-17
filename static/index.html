@@ -383,6 +383,11 @@ function renderOpportunityAsset(d){
  '<h4>ریسک خبر و داده‌های جانبی</h4>'+opLine("تقویم اقتصادی",ctx.event_risk?.note)+
  opLine("داده مشتقات",ctx.derivatives?.available?"دریافت شد":ctx.derivatives?.note||"در دسترس نیست")+
  opLine("تأیید بیرونی",ctx.external_confirmation?.available?"دریافت شد":ctx.external_confirmation?.note||"در دسترس نیست")+
+ opLine("دامیننس بازار کریپتو",r.dominance?.available?JSON.stringify(r.dominance.dominance||r.dominance.data||{}):r.dominance?.error||"داده دامیننس در دسترس نیست")+
+ '<h4>خبرهای مرتبط و عوامل کلان</h4>'+
+ ((r.news_summary||[]).length?'<ul>'+r.news_summary.map(n=>'<li class="small">'+opEscape(n.title)+' <span class="muted">('+opEscape(n.source||"منبع خبری")+', '+opEscape(n.published||"زمان نامشخص")+')</span></li>').join("")+'</ul>':'<div class="small">خبر مرتبط فعلاً دریافت نشد.</div>')+
+ ((r.macro_factors||[]).length?r.macro_factors.map(f=>opLine(f.factor,(f.status||"")+" — "+(f.impact||""))).join(""):"")+
+ opLine("شاخص‌های اقتصاد کلان",r.macro_data?.available?"داده‌های FRED دریافت شده؛ تاریخ هر شاخص باید بررسی شود.":r.macro_data?.message||"منبع کلان در دسترس نیست")+
  '<div class="small" style="margin-top:10px">'+opEscape(d.data_note||"")+' '+opEscape(d.disclaimer||"")+'</div></div>';
  document.getElementById("op-asset-report").innerHTML=html;
  document.getElementById("op-chart-title").textContent=d.symbol+" | نمودار تحلیل روزانه";
