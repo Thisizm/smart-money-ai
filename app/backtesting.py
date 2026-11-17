@@ -38,7 +38,7 @@ def _metrics(trades, equity_curve, initial_equity):
 
 def _simulate(candles, start_index, end_index, initial_equity=10000.0,
               risk_fraction=0.005, fee_rate=0.0004, slippage_rate=0.0002,
-              reward_risk=2.0, max_holding_bars=50):
+              reward_risk=2.0, max_holding_bars=50, signal_engine=None):
     equity = initial_equity
     equity_curve = [equity]
     trades = []
@@ -61,9 +61,21 @@ def _simulate(candles, start_index, end_index, initial_equity=10000.0,
 
         cross_up = ema9[-1] > ema21[-1] and ema9[-2] <= ema21[-2]
         cross_down = ema9[-1] < ema21[-1] and ema9[-2] >= ema21[-2]
-        side = 1 if cross_up and rsi >= 50 and adx >= 18 and plus_di > minus_di else (
-            -1 if cross_down and rsi <= 50 and adx >= 18 and minus_di > plus_di else 0
-        )
+        engine_plan = None
+        if signal_engine is not None:
+            try:
+                engine_result = signal_engine(history)
+                engine_signal = engine_result.get("signal")
+                side = 1 if engine_signal == "BUY" else -1 if engine_signal == "SELL" else 0
+                engine_plan = engine_result.get("trade_plan") or {}
+                if side and (engine_plan.get("stop_loss") is None or not engine_plan.get("targets")):
+                    side = 0
+            except Exception:
+                side = 0
+        else:
+            side = 1 if cross_up and rsi >= 50 and adx >= 18 and plus_di > minus_di else (
+                -1 if cross_down and rsi <= 50 and adx >= 18 and minus_di > plus_di else 0
+            )
         if side == 0:
             i += 1
             continue
@@ -71,9 +83,19 @@ def _simulate(candles, start_index, end_index, initial_equity=10000.0,
         entry_bar = i + 1
         raw_entry = candles[entry_bar]["open"]
         entry = raw_entry * (1 + slippage_rate if side == 1 else 1 - slippage_rate)
-        stop_distance = 1.5 * atr
-        stop = entry - side * stop_distance
-        target = entry + side * stop_distance * reward_risk
+        if engine_plan is not None:
+            stop = float(engine_plan["stop_loss"])
+            target = float(engine_plan["targets"][0])
+            stop_distance = abs(entry - stop)
+            # Reject gaps that place the next-bar fill beyond the planned invalidation
+            # or target; do not silently convert a stale setup into a new trade.
+            if stop_distance <= 0 or (side == 1 and (stop >= entry or target <= entry)) or (side == -1 and (stop <= entry or target >= entry)):
+                i += 1
+                continue
+        else:
+            stop_distance = 1.5 * atr
+            stop = entry - side * stop_distance
+            target = entry + side * stop_distance * reward_risk
         risk_cash = equity * risk_fraction
         quantity = min(risk_cash / stop_distance, equity / max(entry, 1e-12))
         if quantity <= 0:
@@ -153,7 +175,7 @@ def _monte_carlo(r_multiples, paths=500, risk_fraction=0.005, initial_equity=100
     }
 
 
-def _walk_forward(candles, folds=3):
+def _walk_forward(candles, folds=3, signal_engine=None):
     warmup = 60
     usable = len(candles) - warmup
     if usable < folds * 10:
@@ -163,12 +185,12 @@ def _walk_forward(candles, folds=3):
     for index in range(folds):
         start = warmup + index * fold_size
         end = len(candles) if index == folds - 1 else warmup + (index + 1) * fold_size
-        stats = _simulate(candles, start, end)
+        stats = _simulate(candles, start, end, signal_engine=signal_engine)
         results.append({"fold": index + 1, "start_index": start, "end_index": end, "metrics": stats})
     return {"available": True, "method": "three sequential fixed-rule out-of-sample windows", "folds": results}
 
 
-def run_research_backtest(candles, timeframe):
+def run_research_backtest(candles, timeframe, signal_engine=None):
     if len(candles) < 100:
         return {
             "available": False,
@@ -178,16 +200,18 @@ def run_research_backtest(candles, timeframe):
     split = max(70, int(len(candles) * 0.70))
     if split >= len(candles) - 10:
         return {"available": False, "message": "داده کافی برای بخش خارج از نمونه وجود ندارد."}
-    in_sample = _simulate(candles, 60, split)
-    out_sample = _simulate(candles, split, len(candles))
+    in_sample = _simulate(candles, 60, split, signal_engine=signal_engine)
+    out_sample = _simulate(candles, split, len(candles), signal_engine=signal_engine)
     stressed_out_sample = _simulate(
-        candles, split, len(candles), fee_rate=0.0008, slippage_rate=0.0004
+        candles, split, len(candles), fee_rate=0.0008, slippage_rate=0.0004,
+        signal_engine=signal_engine
     )
     monte_carlo = _monte_carlo(out_sample.get("r_multiples", []))
-    walk_forward = _walk_forward(candles)
+    walk_forward = _walk_forward(candles, signal_engine=signal_engine)
     return {
         "available": True,
-        "strategy": "EMA 9/21 crossover + Wilder RSI + ADX directional filter",
+        "strategy": ("Production analyze() signal + trade_plan replay" if signal_engine is not None
+                     else "EMA 9/21 crossover + Wilder RSI + ADX directional filter (standalone baseline)"),
         "timeframe": timeframe,
         "candles": len(candles),
         "split": {"in_sample_percent": 70, "out_of_sample_percent": 30, "chronological": True},
@@ -209,7 +233,9 @@ def run_research_backtest(candles, timeframe):
             "entry_timing": "next candle open after signal candle closes"
         },
         "limitations": [
-            "این بک‌تست یک استراتژی پایه EMA/RSI/ADX را می‌سنجد، نه تمام منطق سیگنال اصلی برنامه.",
+            ("این بک‌تست سیگنال و trade_plan موتور analyze را روی تاریخچه بازپخش می‌کند؛ قیمت ورود در بازشدن کندل بعدی با هزینه اجرا شبیه‌سازی می‌شود. فیلترهای وابسته به قیمت زنده/تقویم در بازپخش تاریخی در دسترس نیستند."
+             if signal_engine is not None else
+             "این بک‌تست فقط استراتژی پایه EMA/RSI/ADX را می‌سنجد و جایگزین بازپخش موتور تولیدی نیست."),
             "داده OHLCV برای بازسازی ترتیب دقیق معاملات داخل کندل کافی نیست؛ برخورد همزمان حدضرر و هدف با فرض محافظه‌کارانه حدضرر حل می‌شود.",
             "کارمزد و اسلیپیج فرضی‌اند؛ هزینه واقعی صرافی، اسپرد، funding، هزینه قرض‌گیری شورت و اثر بازار ممکن است بیشتر باشد.",
             "نمونه تاریخی کوتاه و تعداد معامله کم، نتیجه آماری قابل اتکا نمی‌سازد؛ این گزارش تضمین عملکرد آینده نیست."

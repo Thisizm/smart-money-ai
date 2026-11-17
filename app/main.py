@@ -184,11 +184,9 @@ def get_yahoo_metals_candles(market, timeframe):
     tickers = spot_tickers.get(market)
     if not tickers:
         raise RuntimeError("Unsupported metal market")
-    # Silver has no Yahoo spot ticker. Try the COMEX continuous future as a
-    # clearly labelled last-resort proxy; this is not XAG/USD spot or Binance.
-    if market == "silver":
-        tickers = tickers + futures_tickers[market]
-    elif ALLOW_METAL_FUTURES_PROXY:
+    # Never silently substitute futures for spot. A futures proxy is opt-in
+    # because it can materially diverge from XAG/USD/XAU/USD.
+    if ALLOW_METAL_FUTURES_PROXY:
         tickers = tickers + futures_tickers[market]
 
     settings = {
@@ -309,9 +307,8 @@ def get_yahoo_metals_quote(market):
         raise RuntimeError("Unsupported Yahoo Finance metal")
 
     tickers = [spot_tickers[market]]
-    # Yahoo Finance does not expose a usable XAGUSD=X symbol in this deployment.
-    # SI=F is a COMEX continuous futures proxy, not spot and not Binance TradFi.
-    if market == "silver" or ALLOW_METAL_FUTURES_PROXY:
+    # A COMEX continuous future is not a spot quote. Only use it when explicitly enabled.
+    if ALLOW_METAL_FUTURES_PROXY:
         tickers.append(futures_tickers[market])
 
     errors = []
@@ -454,17 +451,34 @@ def get_candles(market, symbol, timeframe):
     if market == "crypto":
         if symbol not in get_binance_spot_symbols():
             raise HTTPException(400, "نماد باید یک جفت فعال USDT در Binance Spot باشد")
-        params = urllib.parse.urlencode({
-            "symbol": symbol, "interval": tf["binance"], "limit": 250
-        })
+        # Binance limits each request to 1000 bars. Page backwards from the
+        # newest bar so the analysis/backtest receives a longer contiguous history.
+        target = max(250, min(int(os.getenv("HISTORICAL_CANDLE_LIMIT", "1500")), 3000))
+        rows, end_time = [], None
         try:
-            raw = fetch_json("https://data-api.binance.vision/api/v3/klines?" + params)
+            while len(rows) < target:
+                query = {"symbol": symbol, "interval": tf["binance"],
+                         "limit": min(1000, target - len(rows))}
+                if end_time is not None:
+                    query["endTime"] = end_time
+                batch = fetch_json("https://data-api.binance.vision/api/v3/klines?" + urllib.parse.urlencode(query))
+                if not batch:
+                    break
+                rows = batch + rows
+                oldest = int(batch[0][0])
+                if len(batch) < query["limit"] or oldest <= 0:
+                    break
+                end_time = oldest - 1
+            # Remove any overlap and preserve chronological order.
+            unique = {int(row[0]): row for row in rows}
+            rows = [unique[key] for key in sorted(unique)][-target:]
         except Exception as exc:
             raise HTTPException(502, "خطا از منبع کندل Binance Spot: " + str(exc))
         return [{
             "time": int(row[0]), "open": float(row[1]), "high": float(row[2]),
-            "low": float(row[3]), "close": float(row[4]), "volume": float(row[5])
-        } for row in raw]
+            "low": float(row[3]), "close": float(row[4]), "volume": float(row[5]),
+            "source": "Binance Spot", "source_symbol": symbol
+        } for row in rows]
 
     if market in METALS:
         if symbol != METALS[market]:
@@ -612,12 +626,12 @@ def analyze(candles, market, symbol, timeframe):
             zone_low, zone_high = older["high"], current["low"]
             filled = any(candles[j]["low"] <= zone_low for j in range(i + 1, len(candles)))
             if not filled:
-                bullish_fvg_zone = {"low": zone_low, "high": zone_high, "time": current["time"]}
+                bullish_fvg_zone = {"low": zone_low, "high": zone_high, "time": current["time"], "formation_index": i}
         if older["low"] - current["high"] >= min_gap:
             zone_low, zone_high = current["high"], older["low"]
             filled = any(candles[j]["high"] >= zone_high for j in range(i + 1, len(candles)))
             if not filled:
-                bearish_fvg_zone = {"low": zone_low, "high": zone_high, "time": current["time"]}
+                bearish_fvg_zone = {"low": zone_low, "high": zone_high, "time": current["time"], "formation_index": i}
 
     bullish_fvg = bullish_fvg_zone is not None
     bearish_fvg = bearish_fvg_zone is not None
@@ -924,38 +938,45 @@ def analyze(candles, market, symbol, timeframe):
     if order_block and not order_block.get("mitigated"):
         ob_low, ob_high = float(order_block["low"]), float(order_block["high"])
         if "صعودی" in order_block.get("type", "") and ob_high <= price + atr * 0.25:
-            smart_candidates["long"].append(("order_block", ob_low, ob_high))
+            smart_candidates["long"].append(("order_block", ob_low, ob_high, candles.index(next(c for c in candles if c["time"] == order_block.get("displacement_time")))))
         elif "نزولی" in order_block.get("type", "") and ob_low >= price - atr * 0.25:
-            smart_candidates["short"].append(("order_block", ob_low, ob_high))
+            smart_candidates["short"].append(("order_block", ob_low, ob_high, candles.index(next(c for c in candles if c["time"] == order_block.get("displacement_time")))))
     if bullish_fvg_zone and bullish_fvg_zone["high"] <= price + atr * 0.25:
-        smart_candidates["long"].append(("fvg", float(bullish_fvg_zone["low"]), float(bullish_fvg_zone["high"])))
+        smart_candidates["long"].append(("fvg", float(bullish_fvg_zone["low"]), float(bullish_fvg_zone["high"]), int(bullish_fvg_zone["formation_index"])))
     if bearish_fvg_zone and bearish_fvg_zone["low"] >= price - atr * 0.25:
-        smart_candidates["short"].append(("fvg", float(bearish_fvg_zone["low"]), float(bearish_fvg_zone["high"])))
+        smart_candidates["short"].append(("fvg", float(bearish_fvg_zone["low"]), float(bearish_fvg_zone["high"]), int(bearish_fvg_zone["formation_index"])))
     ema_band = max(atr * 0.12, abs(price) * 0.0002)
     if ema21 < price:
-        smart_candidates["long"].append(("ema21", max(0.0, ema21 - ema_band), ema21 + ema_band))
+        smart_candidates["long"].append(("ema21", max(0.0, ema21 - ema_band), ema21 + ema_band, len(candles) - 2))
     if ema21 > price:
-        smart_candidates["short"].append(("ema21", max(0.0, ema21 - ema_band), ema21 + ema_band))
+        smart_candidates["short"].append(("ema21", max(0.0, ema21 - ema_band), ema21 + ema_band, len(candles) - 2))
 
     def make_pullback_plan(side):
         candidates = []
-        for source, low, high in smart_candidates[side]:
-            if low <= 0 or high <= low:
+        for source, low, high, formation_index in smart_candidates[side]:
+            if low <= 0 or high <= low or formation_index >= len(candles) - 1:
                 continue
             distance = max(0.0, low - price, price - high)
             if distance <= atr * 3.0:
-                candidates.append((distance, source, low, high))
+                candidates.append((distance, source, low, high, formation_index))
         if not candidates:
             return {
                 "available": False, "status": "NO_ZONE",
                 "note": "ناحیه پولبک معتبر و نزدیک بر اساس OB/FVG/EMA21 پیدا نشد؛ از ساختن سطح مصنوعی خودداری شد."
             }
-        _, source, zone_low, zone_high = min(candidates, key=lambda item: item[0])
+        _, source, zone_low, zone_high, formation_index = min(candidates, key=lambda item: item[0])
         midpoint = (zone_low + zone_high) / 2.0
-        touched = last["low"] <= zone_high and last["high"] >= zone_low
-        reaction = (last["close"] > last["open"] and last["close"] >= midpoint) if side == "long" else (
-            last["close"] < last["open"] and last["close"] <= midpoint
-        )
+        # A zone cannot be retested by the candle that created it. Only candles
+        # strictly after formation are eligible to count as a revisit.
+        post_formation = candles[formation_index + 1:]
+        touched = bool(post_formation and post_formation[-1]["low"] <= zone_high and post_formation[-1]["high"] >= zone_low)
+        retest_time = post_formation[-1]["time"] if post_formation else None
+        reaction_candle = post_formation[-1] if post_formation else None
+        reaction = bool(reaction_candle and (
+            (reaction_candle["close"] > reaction_candle["open"] and reaction_candle["close"] >= midpoint)
+            if side == "long" else
+            (reaction_candle["close"] < reaction_candle["open"] and reaction_candle["close"] <= midpoint)
+        ))
         confirmed = bool(touched and reaction and not risk_blocked)
         entry = midpoint
         buffer = max(atr * 0.25, abs(entry) * 0.0005)
@@ -971,9 +992,11 @@ def analyze(candles, market, symbol, timeframe):
             "zone": {"low": round(zone_low, 10), "high": round(zone_high, 10)},
             "entry": round(entry, 10), "stop_loss": round(stop_price, 10),
             "targets": [round(value, 10) for value in targets_smart],
-            "source": source, "touched_by_last_closed_candle": bool(touched),
+            "source": source, "formation_time": candles[formation_index]["time"],
+            "retest_time": retest_time,
+            "touched_by_post_formation_closed_candle": bool(touched),
             "reaction_confirmed": bool(reaction), "risk_gate_passed": not risk_blocked,
-            "confirmation": "پس از لمس ناحیه، کندل بسته‌شده باید واکنش هم‌جهت نشان دهد؛ سپس قیمت زنده باید هنوز در محدوده قابل قبول باشد.",
+            "confirmation": "کندل تشکیل‌دهنده ناحیه retest محسوب نمی‌شود؛ یک کندل بسته‌شده بعدی باید ناحیه را لمس و در جهت معامله واکنش نشان دهد. تأیید قیمت زنده در endpoint جداگانه انجام می‌شود.",
             "note": "این سطح تخمینی است؛ لمس ناحیه به‌تنهایی مجوز ورود نیست."
         }
 
@@ -1068,8 +1091,8 @@ def status():
         "providers": {
             "crypto_prices": "Binance Spot live ticker + closed OHLCV candles for all active USDT pairs",
             "crypto_derivatives": "Binance public futures funding/OI/long-short + spot order-book snapshot",
-            "metals_prices": "Twelve Data XAU/USD and XAG/USD spot when entitled; Yahoo Finance fallback, including COMEX SI=F futures proxy for silver",
-            "metal_instrument_note": "Silver SI=F fallback is a COMEX continuous futures proxy, not XAG/USD spot; provider feeds can differ.",
+            "metals_prices": "Twelve Data spot when entitled; Yahoo spot fallback only. COMEX futures proxy is disabled unless ALLOW_METAL_FUTURES_PROXY=true.",
+            "metal_instrument_note": "Spot and futures are never mixed by default. If no spot feed is available, the metal analysis returns unavailable instead of silently substituting a futures contract.",
             "crypto_dominance": "Market-cap dominance from CoinGecko" + ("; CoinMarketCap fallback key configured" if COINMARKETCAP_API_KEY else "; optional CoinMarketCap fallback key not set") + "; Binance Spot is used for exchange prices, not global dominance",
             "liquidation_heatmap": "غیرفعال؛ خوشه‌های تخمینی از امتیازدهی و رابط حذف شدند",
             "global_news": "GDELT DOC 2.0",
@@ -1156,9 +1179,19 @@ def get_crypto_derivatives(symbol):
         mid = (bid + ask) / 2.0
         spread_bps = ((ask - bid) / mid * 10000.0) if mid else None
 
+    metric_status = {
+        "funding": funding is not None,
+        "open_interest": safe_float(oi_data.get("openInterest")) is not None,
+        "long_short": bool(long_rows),
+        "taker_ratio": bool(taker_rows),
+        "spot_order_book": bool(bids and asks),
+    }
     result = {
-        "available": bool(values),
-        "source": "Binance public USD-M futures metrics + spot order-book snapshot",
+        # A spot order-book response alone must not imply futures data is available.
+        "available": any(metric_status[key] for key in ("funding", "open_interest", "long_short", "taker_ratio")),
+        "metric_status": metric_status,
+        "spot_order_book_available": metric_status["spot_order_book"],
+        "source": "Binance public USD-M futures metrics + separate spot order-book snapshot",
         "funding_rate": funding,
         "funding_rate_percent": funding * 100 if funding is not None else None,
         "open_interest_contracts": safe_float(oi_data.get("openInterest")),
@@ -1180,6 +1213,29 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     result["analysis_price"] = result.get("price")
     result["candle_source"] = (candles[-1].get("source") if candles else None) or ("Binance Spot" if market == "crypto" else "Twelve Data / Yahoo Finance metals fallback")
     result["live_quote"] = get_live_quote(market, symbol)
+    quote = result["live_quote"]
+    smart = result.get("smart_entry") or {}
+    for side in ("long", "short"):
+        plan = smart.get(side)
+        if not isinstance(plan, dict) or not plan.get("available") or plan.get("status") == "BLOCKED_BY_ECONOMIC_CALENDAR":
+            continue
+        # Closed-candle reaction is necessary but not sufficient: require a fresh,
+        # non-proxy quote still trading inside the proposed zone before confirmation.
+        quote_fresh = bool(quote.get("available") and not quote.get("is_proxy")
+                           and quote.get("age_seconds") is not None
+                           and quote.get("age_seconds") <= (120 if market == "crypto" else 900))
+        live_price = quote.get("price")
+        zone = plan.get("zone") or {}
+        in_zone = bool(quote_fresh and live_price is not None
+                       and float(zone.get("low", 0)) <= float(live_price) <= float(zone.get("high", 0)))
+        plan["live_quote_confirmed"] = in_zone
+        plan["live_quote_source"] = quote.get("source") if quote_fresh else None
+        if plan.get("status") == "CONFIRMED_ON_CLOSED_CANDLE" and not in_zone:
+            plan["status"] = "WAIT_FOR_LIVE_PRICE_CONFIRMATION"
+        elif plan.get("status") == "WAIT_FOR_PULLBACK_CONFIRMATION" and plan.get("reaction_confirmed") and in_zone and plan.get("risk_gate_passed"):
+            plan["status"] = "CONFIRMED_ON_CLOSED_CANDLE"
+        plan["note"] = (plan.get("note", "") + " قیمت زنده نیز باید تازه و داخل ناحیه باشد؛ در غیر این صورت وضعیت انتظار است.").strip()
+    result["smart_entry"] = smart
     if market == "crypto":
         # Skip the hard-to-read third-party heatmap fetch. Keep observable Binance
         # derivatives metrics as the source for positioning context.
@@ -1189,9 +1245,71 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             "available": False,
             "note": "داده مشتقات عمومی طلا/نقره در این نسخه متصل نیست."
         }
+
+    # Execution-quality gates: stale/unavailable quote or an abnormally wide
+    # observable spot spread blocks a fresh entry, without changing historical analysis.
+    quote_age_limit = 60 if market == "crypto" else 900
+    quote_is_fresh = bool(result["live_quote"].get("available")
+                          and result["live_quote"].get("age_seconds") is not None
+                          and result["live_quote"].get("age_seconds") <= quote_age_limit)
+    execution_flags = []
+    execution_blocked = False
+    if not quote_is_fresh:
+        execution_flags.append("BLOCK: قیمت زنده ناموجود یا قدیمی است؛ ورود جدید مجاز نیست")
+        execution_blocked = True
+    spread_bps = (result.get("derivatives") or {}).get("spot_spread_basis_points")
+    if market == "crypto" and spread_bps is not None:
+        max_spread = float(os.getenv("MAX_ENTRY_SPREAD_BPS", "20"))
+        if spread_bps > max_spread:
+            execution_flags.append("BLOCK: اسپرد دفتر سفارش از آستانه مجاز بیشتر است")
+            execution_blocked = True
+    if execution_blocked:
+        result["signal"] = "WAIT"
+        result["entry_price"] = None
+        result["stop_loss"] = None
+        result["take_profit_1"] = result["take_profit_2"] = result["take_profit_3"] = None
+        result["trade_plan"] = {"entry": None, "stop_loss": None, "targets": [],
+                                "risk_reward": [], "entry_basis": "کیفیت قیمت/اجرا برای ورود کافی نیست."}
+        result.setdefault("wait_reason", []).extend(execution_flags)
+        risk = result.setdefault("risk_management", {})
+        risk["risk_gate_passed"] = False
+        risk.setdefault("risk_flags", []).extend(execution_flags)
+        smart = result.get("smart_entry") or {}
+        smart["risk_gate_passed"] = False
+        smart["risk_flags"] = list(smart.get("risk_flags") or []) + execution_flags
+        for side in ("long", "short"):
+            if isinstance(smart.get(side), dict) and smart[side].get("available"):
+                smart[side]["status"] = "BLOCKED_BY_EXECUTION_QUALITY"
+        result["smart_entry"] = smart
+    result["execution_quality"] = {
+        "quote_fresh": quote_is_fresh, "quote_age_limit_seconds": quote_age_limit,
+        "spread_basis_points": spread_bps,
+        "max_spread_basis_points": float(os.getenv("MAX_ENTRY_SPREAD_BPS", "20")),
+        "blocked": execution_blocked, "flags": execution_flags
+    }
     result["liquidation_heatmap"] = {"available": False, "disabled": True, "note": "نقشه شلوغ قبلی حذف شد."}
     result["liquidation_context"] = {"available": False, "note": "برای جلوگیری از امتیازدهی به خوشه‌های تخمینی نامطمئن، از امتیاز سیگنال حذف شد."}
     result["economic_event_risk"] = economic_event_risk(market)
+    event_risk = result["economic_event_risk"]
+    if event_risk.get("entry_blocked_by_calendar"):
+        # A high-impact release within 15 minutes blocks new entries at the API layer.
+        result["signal"] = "WAIT"
+        result["entry_price"] = None
+        result["stop_loss"] = None
+        result["take_profit_1"] = result["take_profit_2"] = result["take_profit_3"] = None
+        result["trade_plan"] = {"entry": None, "stop_loss": None, "targets": [],
+                                "risk_reward": [], "entry_basis": "ورود به‌دلیل رویداد اقتصادی پرریسک مسدود شد."}
+        result.setdefault("wait_reason", []).append("BLOCK: رویداد اقتصادی مهم در ۱۵ دقیقه آینده")
+        risk = result.setdefault("risk_management", {})
+        risk["risk_gate_passed"] = False
+        risk.setdefault("risk_flags", []).append("BLOCK: تقویم اقتصادی ورود جدید را متوقف کرد")
+        smart = result.get("smart_entry") or {}
+        smart["risk_gate_passed"] = False
+        smart["risk_flags"] = list(smart.get("risk_flags") or []) + ["BLOCK: تقویم اقتصادی ورود جدید را متوقف کرد"]
+        for side in ("long", "short"):
+            if isinstance(smart.get(side), dict) and smart[side].get("available"):
+                smart[side]["status"] = "BLOCKED_BY_ECONOMIC_CALENDAR"
+        result["smart_entry"] = smart
     if market == "crypto":
         result["external_confirmation"] = get_marginpad_screener_confirmation(symbol)
     else:
@@ -1246,8 +1364,19 @@ def api_quote(market: str = "crypto", symbol: str = "BTCUSDT"):
 @app.get("/api/backtest")
 def api_backtest(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str = "1h"):
     candles = completed_candles(get_candles(market, symbol, timeframe), timeframe)
-    result = run_research_backtest(candles, timeframe)
-    result.update({"market": market, "symbol": symbol, "updated_at": utc_now()})
+    # Full production analysis is computationally heavier than the baseline.
+    # Bound replay size to keep the public endpoint responsive; users can raise
+    # this limit via BACKTEST_CANDLE_LIMIT after measuring their instance capacity.
+    replay_limit = max(120, min(int(os.getenv("BACKTEST_CANDLE_LIMIT", "500")), 1000))
+    candles = candles[-replay_limit:]
+    engine = lambda history: analyze(history, market, symbol, timeframe)
+    result = run_research_backtest(candles, timeframe, signal_engine=engine)
+    result.update({
+        "market": market, "symbol": symbol, "updated_at": utc_now(),
+        "production_engine_replay": True,
+        "history_limit": replay_limit,
+        "history_note": "بازپخش موتور تحلیل تولیدی روی آخرین کندل‌های بسته‌شده؛ فیلترهای وابسته به قیمت زنده و تقویم در داده تاریخی قابل بازسازی کامل نیستند."
+    })
     return result
 
 
@@ -2068,14 +2197,44 @@ def market_context(asset: str = "gold"):
     return {"asset": asset, "factors": factors, "macro": macro_data, "news": news_data, "cot": cot_data, "updated_at": utc_now()}
 
 
+def get_scanner_universe(limit):
+    """Rank the eligible spot universe by 24h quote volume before expensive analysis."""
+    symbols = get_binance_spot_symbols()
+    try:
+        tickers = fetch_json("https://data-api.binance.vision/api/v3/ticker/24hr", timeout=15)
+        eligible = set(symbols)
+        ranked = []
+        for row in tickers if isinstance(tickers, list) else []:
+            symbol = row.get("symbol")
+            if symbol not in eligible:
+                continue
+            base = symbol[:-4] if symbol.endswith("USDT") else symbol
+            # Exclude leveraged-token naming patterns from the candidate list.
+            if any(base.endswith(suffix) for suffix in ("UP", "DOWN", "BULL", "BEAR")):
+                continue
+            quote_volume = _as_float(row.get("quoteVolume")) or 0.0
+            if quote_volume < float(os.getenv("SCANNER_MIN_QUOTE_VOLUME_USDT", "5000000")):
+                continue
+            ranked.append((quote_volume, symbol))
+        ranked.sort(reverse=True)
+        if ranked:
+            return [symbol for _, symbol in ranked[:limit]], len(symbols), len(ranked), "24h quote volume; minimum USDT 5m"
+    except Exception:
+        pass
+    preferred = [s for s in CRYPTO_DEFAULT if s in symbols]
+    return (preferred + [s for s in symbols if s not in preferred])[:limit], len(symbols), None, "major-pair fallback; volume ranking unavailable"
+
+
 @app.get("/api/scanner")
 def scanner(market: str = "all", timeframe: str = "15m", limit: int = 10):
     if timeframe not in TIMEFRAMES:
         raise HTTPException(400, "تایم‌فریم نامعتبر است")
     limit = max(1, min(limit, 20))
     tasks = []
+    universe_count, eligible_count, ranking_method = 0, 0, None
     if market in ("all", "crypto"):
-        tasks.extend([("crypto", symbol) for symbol in get_binance_spot_symbols()[:limit]])
+        selected, universe_count, eligible_count, ranking_method = get_scanner_universe(limit)
+        tasks.extend([("crypto", symbol) for symbol in selected])
     if market in ("all", "gold"):
         tasks.append(("gold", METALS["gold"]))
     if market in ("all", "silver"):
@@ -2105,7 +2264,16 @@ def scanner(market: str = "all", timeframe: str = "15m", limit: int = 10):
             except Exception as exc:
                 results.append({"market": m, "symbol": s, "signal": "ERROR", "error": str(exc)[:150]})
     results.sort(key=lambda item: item.get("setup_score", 0), reverse=True)
-    return {"timeframe": timeframe, "results": results, "updated_at": utc_now()}
+    return {
+        "timeframe": timeframe, "results": results, "updated_at": utc_now(),
+        "universe": {
+            "market": market, "crypto_pairs_available": universe_count,
+            "crypto_pairs_meeting_liquidity_filter": eligible_count,
+            "crypto_pairs_analyzed": sum(1 for item in results if item.get("market") == "crypto"),
+            "ranking_method": ranking_method,
+            "note": "اسکنر همه نمادها را تحلیل هم‌زمان نمی‌کند؛ ابتدا کل فهرست را با حجم ۲۴ساعته فیلتر و سپس حداکثر limit نماد را تحلیل می‌کند."
+        }
+    }
 
 
 @app.post("/api/ai-synthesis")
