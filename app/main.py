@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .pro_analysis import advanced_analysis
+from .intelligence_engine import assess_hidden_intelligence, apply_intelligence_gate
 from .backtesting import run_research_backtest
 from .paper_trading import init_paper_db, record_signal, monitor_open_trades, list_paper_trades, close_paper_trade
 
@@ -1263,6 +1264,7 @@ def options():
 
 
 DERIVATIVES_CACHE = {}
+OI_SAMPLE_HISTORY = {}
 
 
 def get_crypto_derivatives(symbol):
@@ -1277,10 +1279,11 @@ def get_crypto_derivatives(symbol):
         "open_interest": "https://fapi.binance.com/fapi/v1/openInterest?symbol=" + base,
         "long_short": "https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=" + base + "&period=1h&limit=1",
         "taker_ratio": "https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=" + base + "&period=1h&limit=1",
-        "order_book": "https://data-api.binance.vision/api/v3/depth?symbol=" + base + "&limit=20"
+        "order_book": "https://data-api.binance.vision/api/v3/depth?symbol=" + base + "&limit=20",
+        "agg_trades": "https://data-api.binance.vision/api/v3/aggTrades?symbol=" + base + "&limit=500"
     }
     values, errors = {}, []
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         futures = {pool.submit(fetch_json, url, None, 7): key for key, url in urls.items()}
         for future in as_completed(futures):
             key = futures[future]
@@ -1304,6 +1307,15 @@ def get_crypto_derivatives(symbol):
     funding = safe_float(funding_rows[-1].get("fundingRate")) if funding_rows else None
     oi_data = values.get("open_interest") or {}
     oi_data = oi_data if isinstance(oi_data, dict) else {}
+    oi_value = safe_float(oi_data.get("openInterest"))
+    oi_change_pct_5m = None
+    previous_oi = OI_SAMPLE_HISTORY.get(symbol)
+    if oi_value is not None and oi_value > 0:
+        if previous_oi and now - previous_oi.get("at", 0) >= 300 and previous_oi.get("value"):
+            oi_change_pct_5m = (oi_value / previous_oi["value"] - 1.0) * 100.0
+            OI_SAMPLE_HISTORY[symbol] = {"at": now, "value": oi_value}
+        elif not previous_oi:
+            OI_SAMPLE_HISTORY[symbol] = {"at": now, "value": oi_value}
     depth = values.get("order_book") or {}
     depth = depth if isinstance(depth, dict) else {}
     bids, asks = depth.get("bids", []), depth.get("asks", [])
@@ -1527,7 +1539,7 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             "shape": "circle",
             "text": "واگرایی " + ("صعودی" if bullish_div else "نزولی")
         })
-    result["paper_trade"] = record_signal(result)
+        # Paper trades are recorded only after all API-level intelligence and execution gates.
     return result
 
 
