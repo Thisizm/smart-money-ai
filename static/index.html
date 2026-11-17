@@ -156,11 +156,21 @@ function showA(d){
  e.className=d.signal==="BUY"?"buy":d.signal==="SELL"?"sell":"wait";
  const q=d.live_quote||{},a=d.advanced_analysis||{},v=a.volatility||{},adx=a.adx||{},mom=a.momentum||{},vp=a.volume_profile||{},liq=a.liquidity_map||{},pd=a.premium_discount||{},macd=a.macd||{},der=d.derivatives||{},ob=d.order_block_approx||{};
  renderLiveQuote(q);
+ const smart=d.smart_entry||{}, smartPlan=smart.preferred_side==="long"?smart.long:smart.preferred_side==="short"?smart.short:null;
+ const useSmart=!!(smartPlan&&smartPlan.available&&smart.risk_gate_passed);
+ const waitingSmart=useSmart&&smartPlan.status!=="CONFIRMED_ON_CLOSED_CANDLE";
+ const displayEntry=useSmart?smartPlan.entry:d.entry_price;
+ const displayStop=useSmart?smartPlan.stop_loss:d.stop_loss;
+ const displayTarget=useSmart?(smartPlan.targets||[])[0]:d.take_profit_1;
  document.getElementById("metrics").innerHTML=
- metric("قیمت",q.available?fmt(q.price):fmt(d.analysis_price??d.price))+
- metric("ورود",fmt(d.entry_price))+
- metric("حد ضرر",fmt(d.stop_loss))+
- metric("هدف اول",fmt(d.take_profit_1));
+ metric("قیمت زنده",q.available?fmt(q.price):fmt(d.analysis_price??d.price))+
+ metric(waitingSmart?"ورود مشروط":"ورود",fmt(displayEntry))+
+ metric("حد ضرر",fmt(displayStop))+
+ metric("هدف اول",fmt(displayTarget));
+ if(waitingSmart){
+  const entryMetric=document.querySelector("#metrics .metric:nth-child(2)");
+  if(entryMetric) entryMetric.title="این عدد مرکز محدوده Smart Entry است، نه سفارش فعال؛ تا تأیید پولبک ورود نکن.";
+ }
  document.getElementById("reasons").innerHTML=(d.analysis||[]).map(x=>"<li>"+x+"</li>").join("");
  let details=[];
  const obApprox=d.order_block_approx||{},detailDer=d.derivatives||{},detailRisk=d.risk_management||{},detailA=d.advanced_analysis||{},detailVp=detailA.volume_profile||{},detailPd=detailA.premium_discount||{},detailMacd=detailA.macd||{};
