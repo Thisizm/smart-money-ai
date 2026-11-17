@@ -294,7 +294,37 @@ def analyze(candles, market, symbol, timeframe):
     previous = candles[-2]
     e9, e21, e50 = ema(closes, 9), ema(closes, 21), ema(closes, 50)
 
-    # Confirmed swing points: two candles on each side, avoiding unconfirmed pivots.
+    # RSI(14), calculated from the latest 14 price changes.
+    changes = [closes[i] - closes[i - 1] for i in range(max(1, len(closes) - 14), len(closes))]
+    gains = [max(change, 0) for change in changes]
+    losses = [max(-change, 0) for change in changes]
+    avg_gain = sum(gains) / max(1, len(gains))
+    avg_loss = sum(losses) / max(1, len(losses))
+    if avg_loss == 0:
+        rsi_value = 100.0 if avg_gain > 0 else 50.0
+    else:
+        rs = avg_gain / avg_loss
+        rsi_value = 100 - (100 / (1 + rs))
+
+    macd_now = ema(closes, 12) - ema(closes, 26)
+    macd_previous = ema(closes[:-1], 12) - ema(closes[:-1], 26)
+    macd_bull = macd_now > 0 and macd_now >= macd_previous
+    macd_bear = macd_now < 0 and macd_now <= macd_previous
+    momentum_up = last["close"] > candles[-4]["close"]
+    momentum_down = last["close"] < candles[-4]["close"]
+
+    # ATR is used to filter tiny gaps and size the risk levels.
+    trs = []
+    for index in range(1, len(candles)):
+        current, prior = candles[index], candles[index - 1]
+        trs.append(max(
+            current["high"] - current["low"],
+            abs(current["high"] - prior["close"]),
+            abs(current["low"] - prior["close"])
+        ))
+    atr = sum(trs[-14:]) / max(1, len(trs[-14:]))
+
+    # Confirmed swing points: two candles on each side.
     pivot_highs, pivot_lows = [], []
     for i in range(2, len(candles) - 2):
         high = candles[i]["high"]
@@ -325,15 +355,15 @@ def analyze(candles, market, symbol, timeframe):
         elif higher_highs and lower_lows:
             structure_trend = "expanding_range"
 
-    recent_closes = [c["close"] for c in candles[-3:]]
-    broke_up = any(value > swing_high for value in recent_closes)
-    broke_down = any(value < swing_low for value in recent_closes)
+    # A close beyond a confirmed swing level is a break; a wick alone is not.
+    broke_up = any(c["close"] > swing_high for c in candles[-3:])
+    broke_down = any(c["close"] < swing_low for c in candles[-3:])
     choch_up = broke_up and structure_trend == "bearish"
     choch_down = broke_down and structure_trend == "bullish"
     bos_up = broke_up and not choch_up
     bos_down = broke_down and not choch_down
 
-    # Search recent candles for liquidity sweeps against previously confirmed pivots.
+    # Search recent candles for liquidity sweeps against already-confirmed pivots.
     sweep_high_event = None
     sweep_low_event = None
     for i in range(max(2, len(candles) - 10), len(candles)):
@@ -351,18 +381,19 @@ def analyze(candles, market, symbol, timeframe):
     sweep_high = sweep_high_event is not None
     sweep_low = sweep_low_event is not None
 
-    # Keep the latest unfilled three-candle fair-value gap from recent history.
+    # Keep the latest unfilled, meaningful three-candle FVG.
     bullish_fvg_zone = None
     bearish_fvg_zone = None
-    for i in range(max(2, len(candles) - 16), len(candles)):
+    min_gap = max(atr * 0.05, abs(last["close"]) * 0.00005)
+    for i in range(max(2, len(candles) - 30), len(candles)):
         older = candles[i - 2]
         current = candles[i]
-        if current["low"] > older["high"]:
+        if current["low"] - older["high"] >= min_gap:
             zone_low, zone_high = older["high"], current["low"]
             filled = any(candles[j]["low"] <= zone_low for j in range(i + 1, len(candles)))
             if not filled:
                 bullish_fvg_zone = {"low": zone_low, "high": zone_high, "time": current["time"]}
-        if current["high"] < older["low"]:
+        if older["low"] - current["high"] >= min_gap:
             zone_low, zone_high = current["high"], older["low"]
             filled = any(candles[j]["high"] >= zone_high for j in range(i + 1, len(candles)))
             if not filled:
@@ -370,47 +401,55 @@ def analyze(candles, market, symbol, timeframe):
 
     bullish_fvg = bullish_fvg_zone is not None
     bearish_fvg = bearish_fvg_zone is not None
-
-    trs = []
-    for index in range(1, len(candles)):
-        current, prior = candles[index], candles[index - 1]
-        trs.append(max(
-            current["high"] - current["low"],
-            abs(current["high"] - prior["close"]),
-            abs(current["low"] - prior["close"])
-        ))
-    atr = sum(trs[-14:]) / max(1, len(trs[-14:]))
-
     avg_volume = sum(c["volume"] for c in candles[-21:-1]) / 20
     volume_confirm = last["volume"] > avg_volume if avg_volume > 0 else False
 
+    # Confluence scores include momentum as well as market structure.
     bull = 0
     bear = 0
-    bull += 12 if e9 > e21 else 0
-    bear += 12 if e9 < e21 else 0
-    bull += 10 if e21 > e50 else 0
-    bear += 10 if e21 < e50 else 0
-    bull += 8 if last["close"] > e21 else 0
-    bear += 8 if last["close"] < e21 else 0
+    bull += 10 if e9 > e21 else 0
+    bear += 10 if e9 < e21 else 0
+    bull += 8 if e21 > e50 else 0
+    bear += 8 if e21 < e50 else 0
+    bull += 6 if last["close"] > e21 else 0
+    bear += 6 if last["close"] < e21 else 0
     bull += 8 if structure_trend == "bullish" else 0
     bear += 8 if structure_trend == "bearish" else 0
-    bull += 22 if bos_up else 0
-    bear += 22 if bos_down else 0
-    bull += 14 if choch_up else 0
-    bear += 14 if choch_down else 0
-    bull += 18 if sweep_low else 0
-    bear += 18 if sweep_high else 0
-    bull += 8 if bullish_fvg else 0
-    bear += 8 if bearish_fvg else 0
+    bull += 18 if bos_up else 0
+    bear += 18 if bos_down else 0
+    bull += 12 if choch_up else 0
+    bear += 12 if choch_down else 0
+    bull += 14 if sweep_low else 0
+    bear += 14 if sweep_high else 0
+    bull += 6 if bullish_fvg else 0
+    bear += 6 if bearish_fvg else 0
+    bull += 8 if rsi_value >= 52 else 0
+    bear += 8 if rsi_value <= 48 else 0
+    bull += 6 if macd_bull else 0
+    bear += 6 if macd_bear else 0
+    bull += 4 if momentum_up else 0
+    bear += 4 if momentum_down else 0
     bull += 4 if volume_confirm and last["close"] >= previous["close"] else 0
     bear += 4 if volume_confirm and last["close"] <= previous["close"] else 0
 
-    # EMA alignment alone is not enough: require a structural clue as well.
+    # If a formal structure event is absent, require at least three momentum/trend checks.
     bull_structure_ok = bos_up or choch_up or sweep_low or bullish_fvg
     bear_structure_ok = bos_down or choch_down or sweep_high or bearish_fvg
-    direction = "BUY" if bull >= 55 and bull - bear >= 12 and bull_structure_ok else (
-        "SELL" if bear >= 55 and bear - bull >= 12 and bear_structure_ok else "WAIT"
+    bull_momentum_checks = sum((
+        e9 > e21, e21 > e50, last["close"] > e21,
+        rsi_value >= 52, macd_bull, momentum_up
+    ))
+    bear_momentum_checks = sum((
+        e9 < e21, e21 < e50, last["close"] < e21,
+        rsi_value <= 48, macd_bear, momentum_down
+    ))
+    bull_confirmed = bull_structure_ok or bull_momentum_checks >= 3
+    bear_confirmed = bear_structure_ok or bear_momentum_checks >= 3
+
+    direction = "BUY" if bull >= 48 and bull - bear >= 10 and bull_confirmed else (
+        "SELL" if bear >= 48 and bear - bull >= 10 and bear_confirmed else "WAIT"
     )
+    bias = "صعودی" if bull - bear >= 6 else "نزولی" if bear - bull >= 6 else "خنثی"
     setup_score = min(100, max(bull, bear))
     price = last["close"]
 
@@ -447,6 +486,8 @@ def analyze(candles, market, symbol, timeframe):
     notes = [
         "EMA 9/21: " + ("صعودی" if e9 > e21 else "نزولی"),
         "EMA 21/50: " + ("صعودی" if e21 > e50 else "نزولی"),
+        "RSI(14): " + str(round(rsi_value, 1)),
+        "MACD مومنتوم: " + ("صعودی" if macd_bull else "نزولی" if macd_bear else "ضعیف/متناقض"),
         "ساختار سوئینگ: " + {
             "bullish": "سقف و کف بالاتر (صعودی)",
             "bearish": "سقف و کف پایین‌تر (نزولی)",
@@ -456,23 +497,29 @@ def analyze(candles, market, symbol, timeframe):
         "شکست ساختار: " + ("BOS صعودی" if bos_up else "BOS نزولی" if bos_down else "شکست تأییدشده‌ای دیده نشد"),
         "تغییر کاراکتر (CHOCH): " + choch,
         "لیکوییدیتی: " + ("سوییپ نقدینگی زیر کف در ۱۰ کندل اخیر" if sweep_low else "سوییپ نقدینگی بالای سقف در ۱۰ کندل اخیر" if sweep_high else "سوییپ تأییدشده‌ای در ۱۰ کندل اخیر پیدا نشد"),
-        "FVG: " + ("ناحیه صعودی باز در کندل‌های اخیر" if bullish_fvg else "ناحیه نزولی باز در کندل‌های اخیر" if bearish_fvg else "FVG باز و تأییدنشده‌ای پیدا نشد"),
-        "حجم: " + ("بالاتر از میانگین ۲۰ کندل" if volume_confirm else "تأیید حجمی ندارد")
+        "FVG: " + ("ناحیه صعودی باز در کندل‌های اخیر" if bullish_fvg else "ناحیه نزولی باز در کندل‌های اخیر" if bearish_fvg else "FVG باز و معناداری پیدا نشد"),
+        "حجم: " + ("بالاتر از میانگین ۲۰ کندل" if volume_confirm else "تأیید حجمی ندارد"),
+        "امتیاز خریدار/فروشنده: " + str(bull) + "/" + str(bear)
     ]
+
     wait_reasons = []
     if direction == "WAIT":
-        if max(bull, bear) < 55:
-            wait_reasons.append("امتیاز هم‌جهتی به حداقل ۵۵ نرسیده")
-        if abs(bull - bear) < 12:
+        if max(bull, bear) < 48:
+            wait_reasons.append("امتیاز هم‌جهتی به حداقل ۴۸ نرسیده")
+        if abs(bull - bear) < 10:
             wait_reasons.append("برتری خریدار یا فروشنده به‌اندازه کافی واضح نیست")
-        if not bull_structure_ok and not bear_structure_ok:
-            wait_reasons.append("شکست ساختار، CHOCH، سوییپ یا FVG باز تأیید نشده")
+        if bull - bear >= 10 and not bull_confirmed:
+            wait_reasons.append("تأیید کافی برای ورود خرید وجود ندارد")
+        if bear - bull >= 10 and not bear_confirmed:
+            wait_reasons.append("تأیید کافی برای ورود فروش وجود ندارد")
         notes.append("علت WAIT: " + "؛ ".join(wait_reasons or ["شواهد کافی برای ورود وجود ندارد"]))
 
     return {
         "market": market, "symbol": symbol, "timeframe": timeframe,
-        "signal": direction, "bias": "صعودی" if direction == "BUY" else "نزولی" if direction == "SELL" else "خنثی",
+        "signal": direction, "bias": bias,
         "setup_score": setup_score, "bull_score": bull, "bear_score": bear,
+        "rsi": round(rsi_value, 2), "macd_momentum": "bullish" if macd_bull else "bearish" if macd_bear else "neutral",
+        "bull_momentum_checks": bull_momentum_checks, "bear_momentum_checks": bear_momentum_checks,
         "score_note": "امتیاز تجربی هم‌جهتی شروط است و احتمال موفقیت معامله نیست.",
         "wait_reason": wait_reasons,
         "market_structure": structure_trend,
@@ -488,7 +535,6 @@ def analyze(candles, market, symbol, timeframe):
         "candles_count": len(candles), "last_candle_time": last["time"],
         "updated_at": utc_now()
     }
-
 @app.get("/", response_class=HTMLResponse)
 def home():
     path = os.path.join(ROOT_DIR, "static", "index.html")
