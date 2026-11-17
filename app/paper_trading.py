@@ -117,6 +117,7 @@ def init_paper_db():
                 signal_entry DOUBLE PRECISION,
                 last_quote_price DOUBLE PRECISION,
                 last_quote_at TEXT,
+                activated_at TEXT,
                 stop_loss DOUBLE PRECISION NOT NULL,
                 target_1 DOUBLE PRECISION NOT NULL,
                 target_2 DOUBLE PRECISION,
@@ -159,6 +160,7 @@ def init_paper_db():
                 signal_entry REAL,
                 last_quote_price REAL,
                 last_quote_at TEXT,
+                activated_at TEXT,
                 stop_loss REAL NOT NULL,
                 target_1 REAL NOT NULL,
                 target_2 REAL,
@@ -186,6 +188,8 @@ def init_paper_db():
                 con.execute("ALTER TABLE paper_trades ADD COLUMN " + name + " REAL")
         if "last_quote_at" not in columns:
             con.execute("ALTER TABLE paper_trades ADD COLUMN last_quote_at TEXT")
+        if "activated_at" not in columns:
+            con.execute("ALTER TABLE paper_trades ADD COLUMN activated_at TEXT")
         for name, declaration in (("quantity", "REAL NOT NULL DEFAULT 0"),
                                   ("notional", "REAL NOT NULL DEFAULT 0"),
                                   ("margin_used", "REAL NOT NULL DEFAULT 0"),
@@ -323,7 +327,7 @@ def monitor_open_trades(quote_getter):
                         notional = qty * fill_price
                         leverage = min(max_lev, max(1.0, float(math.ceil(notional / balance))))
                         margin = notional / leverage
-                        con.execute("UPDATE paper_trades SET status='ACTIVE', entry_price=?, quantity=?, notional=?, leverage=?, margin_used=?, last_quote_price=?, last_quote_at=?, updated_at=?, note=? WHERE id=?", (fill_price, qty, notional, leverage, margin, price, _now(), _now(), "قیمت محدوده ورود را لمس/قطع کرد؛ معامله آزمایشی فعال شد.", row["id"]))
+                        con.execute("UPDATE paper_trades SET status='ACTIVE', entry_price=?, quantity=?, notional=?, leverage=?, margin_used=?, last_quote_price=?, last_quote_at=?, activated_at=?, updated_at=?, note=? WHERE id=?", (fill_price, qty, notional, leverage, margin, price, _now(), _now(), _now(), "قیمت محدوده ورود را لمس/قطع کرد؛ معامله آزمایشی فعال شد.", row["id"]))
                         updated += 1
                     else:
                         con.execute("UPDATE paper_trades SET last_quote_price=?, last_quote_at=?, updated_at=? WHERE id=?", (price, _now(), _now(), row["id"]))
