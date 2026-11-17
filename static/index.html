@@ -382,8 +382,12 @@ function showOpportunityChart(marketName,symbolName){
  if(L.entry_zone){add(L.entry_zone.low,"#38bdf8","کف محدوده ورود");add(L.entry_zone.high,"#38bdf8","سقف محدوده ورود")}
  add(L.entry,"#facc15","تریگر ورود");add(L.stop_loss,"#fb7185","حد ضرر");add(L.invalidation,"#f43f5e","ابطال تحلیل");
  add(L.support,"#60a5fa","حمایت");add(L.resistance,"#f59e0b","مقاومت");add(L.breakout_trigger,"#c084fc","تریگر شکست");
+ if(x.fvg_zone){add(x.fvg_zone.low,"#38bdf8","کف FVG");add(x.fvg_zone.high,"#38bdf8","سقف FVG")}
+ if(x.order_block){add(x.order_block.low,"#a78bfa","کف Order Block");add(x.order_block.high,"#a78bfa","سقف Order Block")}
+ add(x.liquidity_sweep_level,"#eab308","سطح سوییپ نقدینگی");
  (L.targets||[]).forEach((v,i)=>add(v,"#34d399","هدف "+(i+1)));
  if(x.price!=null)add(x.price,"#e2e8f0","قیمت زنده/آخرین");
+ if(x.chart_markers?.length)cs.setMarkers(x.chart_markers);
  legend.innerHTML=items.join("");
  details.textContent="وضعیت: "+x.state_label+" | ساختار: "+(x.market_structure||"—")+" | FVG: "+(x.fvg_zone?opNum(x.fvg_zone.low)+" تا "+opNum(x.fvg_zone.high):"ندارد")+
  " | Order Block: "+(x.order_block?opNum(x.order_block.low)+" تا "+opNum(x.order_block.high):"تأیید نشده")+
