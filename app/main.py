@@ -234,10 +234,13 @@ def get_yahoo_metals_candles(market, timeframe):
                     "Yahoo Finance supplied only " + str(len(candles)) +
                     " usable candles for " + timeframe
                 )
-            if ticker in ("GC=F", "SI=F"):
-                # Futures are a fallback proxy; their price can differ from spot.
-                for candle in candles:
-                    candle["source_symbol"] = ticker
+            for candle in candles:
+                if ticker in ("GC=F", "SI=F"):
+                    # Futures are a fallback proxy; their price can differ from spot.
+                    candle["source"] = "Yahoo Finance futures proxy"
+                else:
+                    candle["source"] = "Yahoo Finance spot"
+                candle["source_symbol"] = ticker
             return candles
         except Exception as exc:
             ticker_errors.append(ticker + ": " + str(exc)[:150])
@@ -286,6 +289,50 @@ def get_twelve_data_metals_candles(symbol, timeframe):
     return candles
 
 
+def get_yahoo_metals_quote(market):
+    """No-key spot quote fallback from Yahoo Finance; may be delayed."""
+    ticker = {"gold": "XAUUSD=X", "silver": "XAGUSD=X"}.get(market)
+    if not ticker:
+        raise RuntimeError("Unsupported Yahoo Finance metal")
+    url = (
+        "https://query1.finance.yahoo.com/v8/finance/chart/"
+        + urllib.parse.quote(ticker, safe="=")
+        + "?" + urllib.parse.urlencode({"range": "1d", "interval": "1m"})
+    )
+    data = fetch_json(url, headers={
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (compatible; SmartMoneyAI/2.2)"
+    }, timeout=15)
+    chart = data.get("chart", {})
+    if chart.get("error"):
+        raise RuntimeError(str(chart["error"]))
+    result = (chart.get("result") or [None])[0]
+    if not result:
+        raise RuntimeError("Yahoo Finance returned no quote data for " + ticker)
+    meta = result.get("meta", {})
+    price = meta.get("regularMarketPrice")
+    stamp = meta.get("regularMarketTime")
+    if price is None:
+        quote = (result.get("indicators", {}).get("quote") or [{}])[0]
+        closes = [value for value in (quote.get("close") or []) if value is not None]
+        if closes:
+            price = closes[-1]
+            timestamps = result.get("timestamp") or []
+            stamp = timestamps[-1] if timestamps else stamp
+    if price is None:
+        raise RuntimeError("Yahoo Finance returned no usable price for " + ticker)
+    stamp = int(stamp or time.time())
+    return {
+        "available": True, "price": float(price),
+        "source": "Yahoo Finance spot quote",
+        "source_symbol": ticker,
+        "source_timestamp": datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat(),
+        "age_seconds": max(0, int(time.time() - stamp)),
+        "is_proxy": False,
+        "note": "قیمت مرجع اسپات از Yahoo Finance؛ ممکن است با تأخیر باشد و با فیدهای دیگر تفاوت داشته باشد."
+    }
+
+
 def get_live_quote(market, symbol):
     """Fetch a separate live/last quote; candle analysis continues to use closed bars."""
     cache_key = market + ":" + symbol
@@ -322,47 +369,37 @@ def get_live_quote(market, symbol):
             errors.append("Binance ticker: " + str(exc)[:140])
 
     elif market in METALS:
-        try:
-            params = urllib.parse.urlencode({"symbol": symbol})
-            data = fetch_json("https://fapi.binance.com/fapi/v1/ticker/24hr?" + params, timeout=8)
-            price = float(data["lastPrice"])
-            stamp_ms = int(data.get("closeTime") or int(now * 1000))
-            result = {
-                "available": True, "price": price,
-                "source": "Binance USD-M TradFi perpetual",
-                "source_symbol": symbol,
-                "source_timestamp": datetime.fromtimestamp(stamp_ms / 1000, tz=timezone.utc).isoformat(),
-                "age_seconds": max(0, int(now - stamp_ms / 1000)),
-                "is_proxy": True,
-                "instrument_type": "USDT-settled perpetual futures",
-                "note": "قیمت قرارداد دائمی TradFi بایننس؛ اسپات فیزیکی نیست و ممکن است با فید CAPITALCOM:XAUUSD/XAGUSD اختلاف داشته باشد."
-            }
-        except Exception as binance_exc:
-            errors.append("Binance USD-M ticker: " + str(binance_exc)[:140])
-            if TWELVE_DATA_API_KEY:
-                try:
-                    provider_symbol = TWELVE_DATA_METAL_SYMBOLS[symbol]
-                    params = urllib.parse.urlencode({
-                        "symbol": provider_symbol, "apikey": TWELVE_DATA_API_KEY,
-                        "format": "JSON", "timezone": "UTC"
-                    })
-                    data = fetch_json("https://api.twelvedata.com/quote?" + params, timeout=15)
-                    price = float(data["close"])
-                    stamp = int(data.get("last_quote_at") or data.get("timestamp") or 0)
-                    result = {
-                        "available": True, "price": price,
-                        "source": "Twelve Data Commodity Aggregate",
-                        "source_symbol": provider_symbol,
-                        "source_timestamp": datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat() if stamp else None,
-                        "age_seconds": max(0, int(now - stamp)) if stamp else None,
-                        "is_proxy": False,
-                        "is_market_open": data.get("is_market_open"),
-                        "note": "قیمت اسپات تجمیعی " + provider_symbol + " از Twelve Data؛ فید آن با CAPITALCOM در TradingView ممکن است اختلاف جزئی داشته باشد."
-                    }
-                except Exception as twelve_exc:
-                    errors.append("Twelve Data quote: " + str(twelve_exc)[:140])
-            else:
-                errors.append("برای قیمت اسپات طلا/نقره، TWELVE_DATA_API_KEY را در Render تنظیم کن.")
+        # Prefer Twelve Data spot quotes for both metals; never route metals through Binance.
+        if TWELVE_DATA_API_KEY:
+            try:
+                provider_symbol = TWELVE_DATA_METAL_SYMBOLS[symbol]
+                params = urllib.parse.urlencode({
+                    "symbol": provider_symbol, "apikey": TWELVE_DATA_API_KEY,
+                    "format": "JSON", "timezone": "UTC"
+                })
+                data = fetch_json("https://api.twelvedata.com/quote?" + params, timeout=15)
+                if "close" not in data:
+                    raise RuntimeError(data.get("message") or "Twelve Data quote has no close price")
+                price = float(data["close"])
+                stamp = int(data.get("last_quote_at") or data.get("timestamp") or 0)
+                result = {
+                    "available": True, "price": price,
+                    "source": "Twelve Data Commodity Aggregate",
+                    "source_symbol": provider_symbol,
+                    "source_timestamp": datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat() if stamp else None,
+                    "age_seconds": max(0, int(now - stamp)) if stamp else None,
+                    "is_proxy": False,
+                    "is_market_open": data.get("is_market_open"),
+                    "note": "قیمت اسپات " + provider_symbol + " از Twelve Data؛ ممکن است با فید CAPITALCOM در TradingView اختلاف جزئی داشته باشد."
+                }
+            except Exception as twelve_exc:
+                errors.append("Twelve Data quote: " + str(twelve_exc)[:140])
+
+        if result is None:
+            try:
+                result = get_yahoo_metals_quote(market)
+            except Exception as yahoo_exc:
+                errors.append("Yahoo Finance spot quote: " + str(yahoo_exc)[:140])
 
 
     if result is None:
@@ -400,30 +437,20 @@ def get_candles(market, symbol, timeframe):
     if market in METALS:
         if symbol != METALS[market]:
             raise HTTPException(400, "نماد فلز نامعتبر است")
-        params = urllib.parse.urlencode({
-            "symbol": symbol, "interval": tf["binance"], "limit": 250
-        })
         try:
-            raw = fetch_json("https://fapi.binance.com/fapi/v1/klines?" + params, timeout=15)
-            if len(raw) < 60:
-                raise RuntimeError("Binance Futures returned fewer than 60 candles")
-            return [{
-                "time": int(row[0]), "open": float(row[1]), "high": float(row[2]),
-                "low": float(row[3]), "close": float(row[4]), "volume": float(row[5]),
-                "source": "Binance USD-M Futures", "source_symbol": symbol
-            } for row in raw]
-        except Exception as binance_exc:
+            # Twelve Data is the primary source for BOTH gold and silver spot candles.
+            return get_twelve_data_metals_candles(symbol, timeframe)
+        except Exception as twelve_exc:
             try:
-                fallback_candles = get_twelve_data_metals_candles(symbol, timeframe)
-                return fallback_candles
-            except Exception as twelve_exc:
+                # Yahoo Finance is a no-key fallback; source and possible delay are labelled.
+                return get_yahoo_metals_candles(market, timeframe)
+            except Exception as yahoo_exc:
                 raise HTTPException(
                     502,
-                    "دریافت کندل فلز از Binance USD-M ناموفق بود (" +
-                    str(binance_exc)[:100] + "). منبع جایگزین Twelve Data نیز در دسترس نیست (" +
-                    str(twelve_exc)[:140] + "). برای فعال‌شدن قیمت اسپات XAU/USD و XAG/USD، کلید دارای دسترسی مناسب Twelve Data را با نام TWELVE_DATA_API_KEY در Render ثبت کن."
+                    "دریافت کندل اسپات فلز از Twelve Data ناموفق بود (" +
+                    str(twelve_exc)[:130] + "). منبع جایگزین Yahoo Finance نیز در دسترس نیست (" +
+                    str(yahoo_exc)[:130] + ")."
                 )
-
 
     raise HTTPException(400, "فقط کریپتو، طلا و نقره پشتیبانی می‌شوند")
 
