@@ -1105,8 +1105,9 @@ def market_context(asset: str = "gold"):
         {"factor": "بازده واقعی اوراق", "status": "داده FRED موجود است" if any(x.get("series") == "DFII10" and x.get("available") for x in macro_data.get("indicators", [])) else "نیازمند FRED_API_KEY", "impact": "افزایش بازده واقعی معمولاً هزینه فرصت نگهداری طلا را بالا می‌برد"},
         {"factor": "نرخ بهره و تورم آمریکا", "status": "داده FRED موجود است" if macro_data.get("available") else "نیازمند FRED_API_KEY", "impact": "انتظارات سیاست پولی می‌تواند بر دلار و فلزات اثر بگذارد"},
         {"factor": "جنگ و تحریم‌ها", "status": "رصد تیترهای خبری فعال", "impact": "ممکن است تقاضای دارایی امن را تغییر دهد"},
-        {"factor": "COT و سایر جریان‌های سرمایه", "status": "داده COT هفتگی در دسترس است؛ ETF و خرید بانک‌های مرکزی هنوز متصل نیستند" if cot_data.get("available") else "داده COT فعلاً در دسترس نیست؛ ETF و خرید بانک‌های مرکزی متصل نیستند", "impact": "برای تحلیل کامل جریان سرمایه نیازمند منبع تخصصی است"}
     ]
+    if asset in ("gold", "silver"):
+        factors.append({"factor": "COT و سایر جریان‌های سرمایه", "status": "داده COT هفتگی در دسترس است؛ ETF و خرید بانک‌های مرکزی هنوز متصل نیستند" if cot_data.get("available") else "داده COT فعلاً در دسترس نیست؛ ETF و خرید بانک‌های مرکزی متصل نیستند", "impact": "موقعیت‌گیری مدیران پولی دید میان‌مدت می‌دهد اما داده هفتگی و با تأخیر است"})
     if asset == "silver":
         factors.append({"factor": "تقاضای صنعتی و معادن نقره", "status": "رصد تیترهای خبری فعال", "impact": "تقاضای صنعتی و اختلال عرضه می‌تواند بر توازن بازار اثر بگذارد"})
     return {"asset": asset, "factors": factors, "macro": macro_data, "news": news_data, "cot": cot_data, "updated_at": utc_now()}
