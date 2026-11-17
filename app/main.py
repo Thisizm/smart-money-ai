@@ -682,18 +682,35 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
 
 @app.get("/api/multi-timeframe")
 def multi_timeframe(market: str = "crypto", symbol: str = "BTCUSDT"):
-    results = []
-    for tf in ("1h", "4h", "1d"):
-        try:
-            candles = get_candles(market, symbol, tf)
-            results.append(analyze(candles, market, symbol, tf))
-        except HTTPException as exc:
-            results.append({"timeframe": tf, "error": exc.detail})
+    timeframes = ("5m", "15m", "1h", "4h", "1d", "1w")
+    weights = {"5m": 1, "15m": 1, "1h": 2, "4h": 3, "1d": 4, "1w": 5}
+    by_timeframe = {}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        future_map = {
+            pool.submit(get_candles, market, symbol, tf): tf for tf in timeframes
+        }
+        for future in as_completed(future_map):
+            tf = future_map[future]
+            try:
+                by_timeframe[tf] = analyze(future.result(), market, symbol, tf)
+            except Exception as exc:
+                detail = exc.detail if isinstance(exc, HTTPException) else str(exc)[:150]
+                by_timeframe[tf] = {"timeframe": tf, "error": detail}
+    results = [by_timeframe[tf] for tf in timeframes]
     available = [item for item in results if "signal" in item]
-    buys = sum(1 for item in available if item["signal"] == "BUY")
-    sells = sum(1 for item in available if item["signal"] == "SELL")
-    overall = "BUY" if buys >= 2 else "SELL" if sells >= 2 else "WAIT"
-    return {"market": market, "symbol": symbol, "overall": overall, "timeframes": results, "updated_at": utc_now()}
+    weighted_score = sum(
+        weights[item["timeframe"]] * (1 if item["signal"] == "BUY" else -1 if item["signal"] == "SELL" else 0)
+        for item in available
+    )
+    overall = "BUY" if weighted_score >= 5 else "SELL" if weighted_score <= -5 else "WAIT"
+    total_weight = sum(weights[item["timeframe"]] for item in available)
+    alignment = round(abs(weighted_score) / total_weight * 100, 1) if total_weight else 0.0
+    return {
+        "market": market, "symbol": symbol, "overall": overall,
+        "weighted_score": weighted_score, "alignment_percent": alignment,
+        "timeframes": results, "updated_at": utc_now(),
+        "note": "تایم‌فریم‌های بالاتر وزن بیشتری دارند؛ امتیاز وزنی احتمال موفقیت نیست."
+    }
 
 
 @app.get("/api/dominance")
@@ -899,7 +916,7 @@ def market_context(asset: str = "gold"):
 def scanner(market: str = "all", timeframe: str = "15m", limit: int = 10):
     if timeframe not in TIMEFRAMES:
         raise HTTPException(400, "تایم‌فریم نامعتبر است")
-    limit = max(1, min(limit, 10))
+    limit = max(1, min(limit, 20))
     tasks = []
     if market in ("all", "crypto"):
         tasks.extend([("crypto", symbol) for symbol in CRYPTO[:limit]])
