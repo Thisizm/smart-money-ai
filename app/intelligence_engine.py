@@ -251,7 +251,26 @@ def assess_hidden_intelligence(
     if market == "crypto" and not dominance.get("available"):
         missing.append("دامیننس کل بازار کریپتو")
     if market == "crypto" and dominance.get("available"):
-        cautions.append("دامیننس فقط یک تصویر مقطعی است؛ تا زمانی که تغییرات تاریخی موجود نباشد جهت مستقل به آن نسبت داده نمی‌شود.")
+        trend = dominance.get("usdt_trend") or {}
+        regime = trend.get("regime")
+        if regime == "defensive_pressure":
+            groups["usdt_dominance"] = {
+                "available": True, "aligned": side == "short",
+                "score": 12 if side == "short" else 0, "weight": 15,
+                "details": "روند افزایشی USDT.D در چند بازه؛ نشانه فشار دفاعی بازار، نه سیگنال مستقل ورود."
+            }
+            cautions.append("USDT.D در حال افزایش است؛ فشار دفاعی/ریسک‌گریزی محتمل است، اما باید با ارزش کل بازار و نمودار خود دارایی تأیید شود.")
+        elif regime == "risk_on_potential":
+            groups["usdt_dominance"] = {
+                "available": True, "aligned": side == "long",
+                "score": 12 if side == "long" else 0, "weight": 15,
+                "details": "روند کاهشی USDT.D در چند بازه؛ احتمال بهبود ریسک‌پذیری، نه اثبات ورود پول."
+            }
+            cautions.append("USDT.D در حال کاهش است؛ احتمال بهبود ریسک‌پذیری وجود دارد، اما کاهش دامیننس به‌تنهایی ورود پول را ثابت نمی‌کند.")
+        else:
+            cautions.append("تاریخچه USDT.D هنوز برای تعیین جهت کافی نیست یا بازه‌ها با هم تعارض دارند؛ فعلاً فقط مقدار لحظه‌ای نمایش داده می‌شود.")
+        if trend.get("total_market_cap_usd") and trend.get("usdt_market_cap_usd_estimate"):
+            cautions.append("برای تفسیر USDT.D، ارزش کل بازار و ارزش بازار تخمینی خود تتر نیز کنار آن بررسی شده‌اند.")
     if profile.get("available"):
         cautions.append("Volume Profile از OHLCV تخمین زده شده و پروفایل واقعی تیک‌به‌تیک نیست.")
     if derivatives.get("spot_order_book_available"):
