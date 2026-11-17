@@ -38,6 +38,29 @@ def _rsi_wilder(closes, period=14):
     return 100.0 - 100.0 / (1.0 + rs)
 
 
+def _rsi_wilder_series(closes, period=14):
+    """Return a Wilder RSI series aligned to the close array."""
+    result = [None] * len(closes)
+    changes = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    if len(changes) < period:
+        return result
+    gains = [max(value, 0.0) for value in changes]
+    losses = [max(-value, 0.0) for value in changes]
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    def value_for(average_gain, average_loss):
+        if average_loss <= 1e-15:
+            return 100.0 if average_gain > 0 else 50.0
+        relative_strength = average_gain / average_loss
+        return 100.0 - 100.0 / (1.0 + relative_strength)
+    result[period] = round(value_for(avg_gain, avg_loss), 2)
+    for index in range(period, len(changes)):
+        avg_gain = (avg_gain * (period - 1) + gains[index]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[index]) / period
+        result[index + 1] = round(value_for(avg_gain, avg_loss), 2)
+    return result
+
+
 def _true_ranges(candles):
     out = []
     for i, candle in enumerate(candles):
@@ -268,6 +291,7 @@ def advanced_analysis(candles, timeframe):
 
     return {
         "rsi_wilder_14": round(rsi, 2),
+        "rsi_series": _rsi_wilder_series(closes, 14),
         "macd": {"line": macd_line, "signal": macd_signal, "histogram": macd_hist, "bias": "bullish" if macd_hist > 0 else "bearish" if macd_hist < 0 else "neutral"},
         "adx": {"value": round(adx, 2), "plus_di": round(plus_di, 2), "minus_di": round(minus_di, 2), "regime": regime},
         "volatility": {"atr": atr, "atr_percent": round(atr_pct, 4), "bollinger_upper": bb_upper, "bollinger_mid": bb_mid, "bollinger_lower": bb_lower, "bollinger_width_percent": round(bb_width, 4), "bollinger_width_percentile": round(width_rank * 100, 1), "squeeze": squeeze},
