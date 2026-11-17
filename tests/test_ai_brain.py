@@ -1,6 +1,9 @@
+import io
 import unittest
+from unittest.mock import patch
+import urllib.error
 
-from app.ai_brain import build_prompt, validate_decision
+from app.ai_brain import build_prompt, validate_decision, _request_with_retry
 
 
 class AIBrainValidationTests(unittest.TestCase):
@@ -53,6 +56,33 @@ class AIBrainValidationTests(unittest.TestCase):
         self.assertIsNone(result["entry_zone"])
         self.assertIsNone(result["stop_loss"])
         self.assertEqual(result["targets"], [])
+
+
+class GeminiRetryTests(unittest.TestCase):
+    @patch("app.ai_brain.time.sleep")
+    @patch("app.ai_brain._gemini_request")
+    def test_temporary_503_is_retried_without_changing_request(self, request, sleep):
+        unavailable = urllib.error.HTTPError(
+            "https://example.invalid", 503, "Unavailable", {}, io.BytesIO(b"busy")
+        )
+        request.side_effect = [unavailable, {"ok": True}]
+        result = _request_with_retry("gemini-3.8-flash", "key", b"same-body")
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(request.call_count, 2)
+        request.assert_any_call("gemini-3.8-flash", "key", b"same-body")
+        sleep.assert_called_once()
+
+    @patch("app.ai_brain.time.sleep")
+    @patch("app.ai_brain._gemini_request")
+    def test_503_stops_after_three_attempts(self, request, sleep):
+        unavailable = urllib.error.HTTPError(
+            "https://example.invalid", 503, "Unavailable", {}, io.BytesIO(b"busy")
+        )
+        request.side_effect = [unavailable, unavailable, unavailable]
+        with self.assertRaises(urllib.error.HTTPError):
+            _request_with_retry("gemini-3.8-flash", "key", b"same-body")
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
 
 
 if __name__ == "__main__":
