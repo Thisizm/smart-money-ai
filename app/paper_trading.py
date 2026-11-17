@@ -200,7 +200,15 @@ def monitor_open_trades(quote_getter):
                 touched = low <= price <= high or crossed_zone
                 with _LOCK, _connect() as con:
                     if touched:
-                        con.execute("UPDATE paper_trades SET status='ACTIVE', entry_price=?, last_quote_price=?, last_quote_at=?, updated_at=?, note=? WHERE id=?", (fill_price, price, _now(), _now(), "قیمت محدوده ورود را لمس/قطع کرد؛ معامله آزمایشی فعال شد.", row["id"]))
+                        fill_risk = abs(fill_price - float(row["stop_loss"]))
+                        balance = float(row["initial_balance"] or 10000)
+                        risk_cash = float(row["risk_cash"] or balance * 0.005)
+                        max_lev = max(1.0, min(5.0, float(os.getenv("PAPER_MAX_LEVERAGE", "5"))))
+                        qty = min(risk_cash / max(fill_risk, 1e-12), balance * max_lev / max(fill_price, 1e-12))
+                        notional = qty * fill_price
+                        leverage = min(max_lev, max(1.0, float(math.ceil(notional / balance))))
+                        margin = notional / leverage
+                        con.execute("UPDATE paper_trades SET status='ACTIVE', entry_price=?, quantity=?, notional=?, leverage=?, margin_used=?, last_quote_price=?, last_quote_at=?, updated_at=?, note=? WHERE id=?", (fill_price, qty, notional, leverage, margin, price, _now(), _now(), "قیمت محدوده ورود را لمس/قطع کرد؛ معامله آزمایشی فعال شد.", row["id"]))
                         updated += 1
                     else:
                         con.execute("UPDATE paper_trades SET last_quote_price=?, last_quote_at=?, updated_at=? WHERE id=?", (price, _now(), _now(), row["id"]))
