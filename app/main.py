@@ -5,6 +5,8 @@ import urllib.parse
 import urllib.request
 import urllib.error
 import hmac
+import time
+import threading
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -42,6 +44,8 @@ TIMEFRAMES = {
     "1w": {"binance": "1w", "twelve": "1week"},
 }
 NEWS_CACHE = {}
+GDELT_LOCK = threading.Lock()
+GDELT_LAST_REQUEST_AT = 0.0
 MACRO_CACHE = {"at": 0, "data": None}
 
 
@@ -505,18 +509,39 @@ def classify_news(title, asset):
 
 @app.get("/api/news")
 def news(asset: str = "gold"):
+    global GDELT_LAST_REQUEST_AT
     if asset not in ("gold", "silver", "crypto"):
         raise HTTPException(400, "asset باید gold، silver یا crypto باشد")
     now = datetime.now(timezone.utc).timestamp()
     cached = NEWS_CACHE.get(asset)
-    if cached and now - cached["at"] < 600:
-        return cached["data"]
+    if cached:
+        cache_ttl = 600 if cached["data"].get("available", True) else 60
+        if now - cached["at"] < cache_ttl:
+            return cached["data"]
+
     params = urllib.parse.urlencode({
         "query": news_query(asset), "mode": "ArtList", "format": "json",
-        "maxrecords": 20, "timespan": "3d", "sort": "DateDesc"
+        "maxrecords": 15, "timespan": "3d", "sort": "DateDesc"
     })
+    url = "https://api.gdeltproject.org/api/v2/doc/doc?" + params
     try:
-        raw = fetch_json("https://api.gdeltproject.org/api/v2/doc/doc?" + params, timeout=20)
+        # GDELT asks clients to keep requests at least five seconds apart.
+        # Serialize requests so simultaneous dashboard calls respect that limit.
+        with GDELT_LOCK:
+            wait_seconds = 5.2 - (time.monotonic() - GDELT_LAST_REQUEST_AT)
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
+            GDELT_LAST_REQUEST_AT = time.monotonic()
+            try:
+                raw = fetch_json(url, timeout=20)
+            except RuntimeError as first_error:
+                if "HTTP 429" not in str(first_error):
+                    raise
+                # One delayed retry handles a transient upstream rate-limit response.
+                time.sleep(5.5)
+                GDELT_LAST_REQUEST_AT = time.monotonic()
+                raw = fetch_json(url, timeout=20)
+
         articles = []
         for item in raw.get("articles", []):
             title = item.get("title", "")
@@ -528,14 +553,30 @@ def news(asset: str = "gold"):
             })
         result = {
             "asset": asset, "articles": articles, "count": len(articles),
+            "available": True, "stale": False,
             "source": "GDELT DOC 2.0", "updated_at": utc_now(),
             "disclaimer": "برچسب‌ها بر اساس کلمات تیتر هستند؛ تحلیل قطعی اثر قیمت یا جایگزین مطالعه خبر نیستند."
         }
         NEWS_CACHE[asset] = {"at": now, "data": result}
         return result
     except Exception as exc:
-        raise HTTPException(502, "دریافت خبر از GDELT ناموفق بود: " + str(exc)[:140])
+        # Prefer clearly labelled cached headlines over breaking the whole news panel.
+        if cached and cached.get("data", {}).get("articles"):
+            stale_result = dict(cached["data"])
+            stale_result["stale"] = True
+            stale_result["warning"] = "اتصال به GDELT موقتاً محدود شده؛ این‌ها خبرهای ذخیره‌شده قبلی هستند."
+            stale_result["cache_age_seconds"] = int(max(0, now - cached["at"]))
+            return stale_result
 
+        result = {
+            "asset": asset, "articles": [], "count": 0,
+            "available": False, "stale": False,
+            "source": "GDELT DOC 2.0",
+            "warning": "دریافت خبر موقتاً به‌دلیل محدودیت درخواست یا اختلال منبع ممکن نیست.",
+            "error": str(exc)[:180], "updated_at": utc_now()
+        }
+        NEWS_CACHE[asset] = {"at": now, "data": result}
+        return result
 
 FRED_SERIES = {
     "DGS10": {"label": "بازده اوراق ۱۰ ساله آمریکا", "unit": "%"},
