@@ -44,7 +44,7 @@ function showA(d){
  const q=d.live_quote||{},a=d.advanced_analysis||{},v=a.volatility||{},adx=a.adx||{},mom=a.momentum||{},vp=a.volume_profile||{},liq=a.liquidity_map||{},pd=a.premium_discount||{},macd=a.macd||{},der=d.derivatives||{},ob=d.order_block_approx||{};
  renderLiveQuote(q);
  document.getElementById("metrics").innerHTML=
- metric("قیمت لحظه‌ای",q.available?fmt(q.price):"دریافت نشد")+metric("قیمت مبنای تحلیل (کندل بسته)",fmt(d.analysis_price??d.price))+metric("سن قیمت زنده",q.age_seconds==null?"نامشخص":fmt(q.age_seconds)+" ثانیه")+metric("منبع قیمت",q.source||"ناموجود")+
+ metric("قیمت لحظه‌ای",q.available?fmt(q.price):"دریافت نشد")+metric("قیمت مبنای تحلیل (کندل بسته)",fmt(d.analysis_price??d.price))+metric("سن قیمت زنده",q.age_seconds==null?"نامشخص":fmt(q.age_seconds)+" ثانیه")+metric("منبع قیمت زنده",q.source||"ناموجود")+metric("منبع کندل‌های تحلیل",d.candle_source||"نامشخص")+
  metric("حد ضرر",fmt(d.stop_loss))+metric("هدف ۱",fmt(d.take_profit_1))+metric("هدف ۲",fmt(d.take_profit_2))+
  metric("امتیاز کل",d.setup_score+"/100")+metric("امتیاز خرید",d.bull_score??"—")+metric("امتیاز فروش",d.bear_score??"—")+
  metric("RSI وایلدر",fmt(d.rsi))+metric("ADX",fmt(adx.value))+metric("رژیم بازار",adx.regime||"—")+
