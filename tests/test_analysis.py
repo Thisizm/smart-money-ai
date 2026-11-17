@@ -113,6 +113,15 @@ class AdvancedAnalysisTests(unittest.TestCase):
         self.assertIn("monte_carlo", result)
         self.assertEqual(result["split"]["out_of_sample_percent"], 30)
 
+    def test_production_engine_backtest_is_explicitly_labelled(self):
+        result = run_research_backtest(
+            sample_candles(), "1d",
+            signal_engine=lambda history: {"signal": "WAIT", "trade_plan": {}}
+        )
+        self.assertTrue(result["available"])
+        self.assertIn("Production analyze()", result["strategy"])
+        self.assertTrue(result["out_of_sample"]["trades"] >= 0)
+
     def test_integrated_analysis_has_risk_gate(self):
         result = analyze(sample_candles(), "crypto", "BTCUSDT", "1d")
         self.assertIn(result["signal"], ("BUY", "SELL", "WAIT"))
@@ -132,7 +141,10 @@ class AdvancedAnalysisTests(unittest.TestCase):
                 self.assertLessEqual(plan["zone"]["low"], plan["zone"]["high"])
                 self.assertGreater(plan["stop_loss"], 0)
                 self.assertEqual(len(plan["targets"]), 3)
-                self.assertIn(plan["status"], ("CONFIRMED_ON_CLOSED_CANDLE", "WAIT_FOR_PULLBACK_CONFIRMATION"))
+                self.assertIn(plan["status"], (
+                    "CONFIRMED_ON_CLOSED_CANDLE", "WAIT_FOR_PULLBACK_CONFIRMATION",
+                    "WAIT_FOR_LIVE_PRICE_CONFIRMATION", "BLOCKED_BY_ECONOMIC_CALENDAR"
+                ))
 
     def test_pearson_correlation(self):
         result = pearson_correlation([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], [2, 4, 6, 8, 10, 12, 14, 16, 18, 20])
