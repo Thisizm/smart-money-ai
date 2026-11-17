@@ -24,7 +24,7 @@ class PaperTradingTests(unittest.TestCase):
             "timeframe": "15m", "last_candle_time": 1700000000000,
             "updated_at": "2026-11-17T12:00:00+00:00", "entry_price": 100.0,
             "atr": 2.0, "live_quote": {
-                "available": True, "price": 100.1, "age_seconds": 2,
+                "available": True, "price": 100.5, "age_seconds": 2,
                 "is_proxy": False, "source": "Binance Spot"
             },
             "trade_plan": {"entry": 100.0, "stop_loss": 98.0,
