@@ -270,11 +270,15 @@ def record_signal(result, entry_mode="smart"):
         live_price = float(quote["price"])
         if entry_mode == "smart":
             smart = result.get("smart_entry") or {}
+            smart_plan = smart.get("long" if side == "LONG" else "short") or {}
+            if not smart_plan.get("available") or smart_plan.get("status") in (
+                "INVALIDATED", "BLOCKED_BY_ECONOMIC_CALENDAR", "BLOCKED_BY_EXECUTION_QUALITY"
+            ):
+                return {"recorded": False, "reason": "smart_entry_not_available"}
             if smart.get("risk_gate_passed") is False:
                 return {"recorded": False, "reason": "smart_entry_risk_gate_blocked"}
             if smart.get("preferred_side") != ("long" if side == "LONG" else "short"):
                 return {"recorded": False, "reason": "smart_entry_direction_mismatch"}
-            smart_plan = smart.get("long" if side == "LONG" else "short") or {}
             if not smart_plan.get("available") or smart_plan.get("status") in (
                 "INVALIDATED", "BLOCKED_BY_ECONOMIC_CALENDAR", "BLOCKED_BY_EXECUTION_QUALITY"
             ):
