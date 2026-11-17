@@ -364,7 +364,7 @@ function opLine(title,value){return '<div class="small"><b>'+opEscape(title)+':<
 function renderOpportunityAsset(d){
  const a=d.daily_analysis||{},r=d.report||{},levels=d.levels||{},ctx=d.market_context||{};
  const tfs=d.timeframes||{},align=d.timeframe_alignment||{};
- const tfNames={"1w":"هفتگی","1d":"روزانه","4h":"۴ ساعته","1h":"۱ ساعته"};
+ const tfNames={"1w":"هفتگی","1d":"روزانه","4h":"۴ ساعته","1h":"۱ ساعته","15m":"۱۵ دقیقه"};
  let html='<div class="item" style="margin-top:12px"><h3>'+opEscape(d.symbol)+' | گزارش کامل تحلیل</h3>'+
  '<div><b>'+opEscape(r.headline||"")+'</b></div><div class="small">'+opEscape(r.context||"")+'</div>'+
  '<div class="metrics">'+metric("قیمت زنده",opPrice(d.price))+metric("قیمت آخرین کندل",opPrice(a.price))+metric("ساختار روزانه",opEscape(a.market_structure||"—"))+metric("امتیاز ستاپ",opEscape(a.setup_score??"—")+"/100")+'</div>'+
