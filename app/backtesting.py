@@ -1,4 +1,6 @@
 """Conservative OHLCV research backtest with chronological holdout and execution costs."""
+import random
+
 from .pro_analysis import _adx, _ema_series, _rsi_wilder, _true_ranges
 
 
@@ -29,7 +31,8 @@ def _metrics(trades, equity_curve, initial_equity):
         "average_win": round(sum(wins) / len(wins), 2) if wins else None,
         "average_loss": round(sum(losses) / len(losses), 2) if losses else None,
         "max_drawdown_percent": round(max_dd, 2),
-        "trade_log": trades[-20:]
+        "trade_log": trades[-20:],
+        "r_multiples": r_values
     }
 
 
@@ -117,6 +120,54 @@ def _simulate(candles, start_index, end_index, initial_equity=10000.0,
     return _metrics(trades, equity_curve, initial_equity)
 
 
+def _monte_carlo(r_multiples, paths=500, risk_fraction=0.005, initial_equity=10000.0):
+    if len(r_multiples) < 5:
+        return {"available": False, "message": "برای شبیه‌سازی مونت‌کارلو حداقل ۵ معامله خارج از نمونه لازم است.", "trades": len(r_multiples)}
+    rng = random.Random(42)
+    final_returns, drawdowns = [], []
+    for _ in range(paths):
+        sample = [rng.choice(r_multiples) for _ in range(len(r_multiples))]
+        equity = peak = initial_equity
+        max_dd = 0.0
+        for r_value in sample:
+            equity *= max(0.01, 1.0 + r_value * risk_fraction)
+            peak = max(peak, equity)
+            if peak > 0:
+                max_dd = max(max_dd, (peak - equity) / peak * 100.0)
+        final_returns.append((equity / initial_equity - 1.0) * 100.0)
+        drawdowns.append(max_dd)
+    final_returns.sort()
+    drawdowns.sort()
+    q05 = final_returns[int((len(final_returns) - 1) * 0.05)]
+    q50 = final_returns[int((len(final_returns) - 1) * 0.50)]
+    q95 = final_returns[int((len(final_returns) - 1) * 0.95)]
+    dd95 = drawdowns[int((len(drawdowns) - 1) * 0.95)]
+    return {
+        "available": True, "paths": paths, "trades_per_path": len(r_multiples),
+        "return_percent_p05": round(q05, 2),
+        "return_percent_median": round(q50, 2),
+        "return_percent_p95": round(q95, 2),
+        "probability_of_loss_percent": round(sum(1 for x in final_returns if x < 0) / paths * 100.0, 1),
+        "max_drawdown_percent_p95": round(dd95, 2),
+        "method": "bootstrap resampling of out-of-sample trade R-multiples with replacement; fixed 0.5% risk"
+    }
+
+
+def _walk_forward(candles, folds=3):
+    warmup = 60
+    usable = len(candles) - warmup
+    if usable < folds * 10:
+        return {"available": False, "message": "داده کافی برای پنجره‌های walk-forward وجود ندارد."}
+    fold_size = usable // folds
+    results = []
+    for index in range(folds):
+        start = warmup + index * fold_size
+        end = len(candles) if index == folds - 1 else warmup + (index + 1) * fold_size
+        stats = _simulate(candles, start, end)
+        results.append({"fold": index + 1, "start_index": start, "end_index": end, "metrics": stats})
+    return {"available": True, "method": "three sequential fixed-rule out-of-sample windows", "folds": results}
+
+
 def run_research_backtest(candles, timeframe):
     if len(candles) < 100:
         return {
@@ -132,6 +183,8 @@ def run_research_backtest(candles, timeframe):
     stressed_out_sample = _simulate(
         candles, split, len(candles), fee_rate=0.0008, slippage_rate=0.0004
     )
+    monte_carlo = _monte_carlo(out_sample.get("r_multiples", []))
+    walk_forward = _walk_forward(candles)
     return {
         "available": True,
         "strategy": "EMA 9/21 crossover + Wilder RSI + ADX directional filter",
@@ -141,6 +194,8 @@ def run_research_backtest(candles, timeframe):
         "in_sample": in_sample,
         "out_of_sample": out_sample,
         "out_of_sample_2x_cost_stress": stressed_out_sample,
+        "walk_forward": walk_forward,
+        "monte_carlo": monte_carlo,
         "sample_warning": "اگر تعداد معاملات خارج از نمونه کمتر از ۳۰ باشد، معیارها بسیار ناپایدارند." if out_sample["trades"] < 30 else None,
         "assumptions": {
             "starting_equity_per_period": 10000,
