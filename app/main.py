@@ -454,17 +454,34 @@ def get_candles(market, symbol, timeframe):
     if market == "crypto":
         if symbol not in get_binance_spot_symbols():
             raise HTTPException(400, "نماد باید یک جفت فعال USDT در Binance Spot باشد")
-        params = urllib.parse.urlencode({
-            "symbol": symbol, "interval": tf["binance"], "limit": 250
-        })
+        # Binance limits each request to 1000 bars. Page backwards from the
+        # newest bar so the analysis/backtest receives a longer contiguous history.
+        target = max(250, min(int(os.getenv("HISTORICAL_CANDLE_LIMIT", "1500")), 3000))
+        rows, end_time = [], None
         try:
-            raw = fetch_json("https://data-api.binance.vision/api/v3/klines?" + params)
+            while len(rows) < target:
+                query = {"symbol": symbol, "interval": tf["binance"],
+                         "limit": min(1000, target - len(rows))}
+                if end_time is not None:
+                    query["endTime"] = end_time
+                batch = fetch_json("https://data-api.binance.vision/api/v3/klines?" + urllib.parse.urlencode(query))
+                if not batch:
+                    break
+                rows = batch + rows
+                oldest = int(batch[0][0])
+                if len(batch) < query["limit"] or oldest <= 0:
+                    break
+                end_time = oldest - 1
+            # Remove any overlap and preserve chronological order.
+            unique = {int(row[0]): row for row in rows}
+            rows = [unique[key] for key in sorted(unique)][-target:]
         except Exception as exc:
             raise HTTPException(502, "خطا از منبع کندل Binance Spot: " + str(exc))
         return [{
             "time": int(row[0]), "open": float(row[1]), "high": float(row[2]),
-            "low": float(row[3]), "close": float(row[4]), "volume": float(row[5])
-        } for row in raw]
+            "low": float(row[3]), "close": float(row[4]), "volume": float(row[5]),
+            "source": "Binance Spot", "source_symbol": symbol
+        } for row in rows]
 
     if market in METALS:
         if symbol != METALS[market]:
@@ -1156,9 +1173,19 @@ def get_crypto_derivatives(symbol):
         mid = (bid + ask) / 2.0
         spread_bps = ((ask - bid) / mid * 10000.0) if mid else None
 
+    metric_status = {
+        "funding": funding is not None,
+        "open_interest": safe_float(oi_data.get("openInterest")) is not None,
+        "long_short": bool(long_rows),
+        "taker_ratio": bool(taker_rows),
+        "spot_order_book": bool(bids and asks),
+    }
     result = {
-        "available": bool(values),
-        "source": "Binance public USD-M futures metrics + spot order-book snapshot",
+        # A spot order-book response alone must not imply futures data is available.
+        "available": any(metric_status[key] for key in ("funding", "open_interest", "long_short", "taker_ratio")),
+        "metric_status": metric_status,
+        "spot_order_book_available": metric_status["spot_order_book"],
+        "source": "Binance public USD-M futures metrics + separate spot order-book snapshot",
         "funding_rate": funding,
         "funding_rate_percent": funding * 100 if funding is not None else None,
         "open_interest_contracts": safe_float(oi_data.get("openInterest")),
@@ -2068,14 +2095,44 @@ def market_context(asset: str = "gold"):
     return {"asset": asset, "factors": factors, "macro": macro_data, "news": news_data, "cot": cot_data, "updated_at": utc_now()}
 
 
+def get_scanner_universe(limit):
+    """Rank the eligible spot universe by 24h quote volume before expensive analysis."""
+    symbols = get_binance_spot_symbols()
+    try:
+        tickers = fetch_json("https://data-api.binance.vision/api/v3/ticker/24hr", timeout=15)
+        eligible = set(symbols)
+        ranked = []
+        for row in tickers if isinstance(tickers, list) else []:
+            symbol = row.get("symbol")
+            if symbol not in eligible:
+                continue
+            base = symbol[:-4] if symbol.endswith("USDT") else symbol
+            # Exclude leveraged-token naming patterns from the candidate list.
+            if any(base.endswith(suffix) for suffix in ("UP", "DOWN", "BULL", "BEAR")):
+                continue
+            quote_volume = _as_float(row.get("quoteVolume")) or 0.0
+            if quote_volume < float(os.getenv("SCANNER_MIN_QUOTE_VOLUME_USDT", "5000000")):
+                continue
+            ranked.append((quote_volume, symbol))
+        ranked.sort(reverse=True)
+        if ranked:
+            return [symbol for _, symbol in ranked[:limit]], len(symbols), len(ranked), "24h quote volume; minimum USDT 5m"
+    except Exception:
+        pass
+    preferred = [s for s in CRYPTO_DEFAULT if s in symbols]
+    return (preferred + [s for s in symbols if s not in preferred])[:limit], len(symbols), None, "major-pair fallback; volume ranking unavailable"
+
+
 @app.get("/api/scanner")
 def scanner(market: str = "all", timeframe: str = "15m", limit: int = 10):
     if timeframe not in TIMEFRAMES:
         raise HTTPException(400, "تایم‌فریم نامعتبر است")
     limit = max(1, min(limit, 20))
     tasks = []
+    universe_count, eligible_count, ranking_method = 0, 0, None
     if market in ("all", "crypto"):
-        tasks.extend([("crypto", symbol) for symbol in get_binance_spot_symbols()[:limit]])
+        selected, universe_count, eligible_count, ranking_method = get_scanner_universe(limit)
+        tasks.extend([("crypto", symbol) for symbol in selected])
     if market in ("all", "gold"):
         tasks.append(("gold", METALS["gold"]))
     if market in ("all", "silver"):
@@ -2105,7 +2162,16 @@ def scanner(market: str = "all", timeframe: str = "15m", limit: int = 10):
             except Exception as exc:
                 results.append({"market": m, "symbol": s, "signal": "ERROR", "error": str(exc)[:150]})
     results.sort(key=lambda item: item.get("setup_score", 0), reverse=True)
-    return {"timeframe": timeframe, "results": results, "updated_at": utc_now()}
+    return {
+        "timeframe": timeframe, "results": results, "updated_at": utc_now(),
+        "universe": {
+            "market": market, "crypto_pairs_available": universe_count,
+            "crypto_pairs_meeting_liquidity_filter": eligible_count,
+            "crypto_pairs_analyzed": sum(1 for item in results if item.get("market") == "crypto"),
+            "ranking_method": ranking_method,
+            "note": "اسکنر همه نمادها را تحلیل هم‌زمان نمی‌کند؛ ابتدا کل فهرست را با حجم ۲۴ساعته فیلتر و سپس حداکثر limit نماد را تحلیل می‌کند."
+        }
+    }
 
 
 @app.post("/api/ai-synthesis")
