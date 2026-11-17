@@ -589,7 +589,10 @@ def status():
             "crypto_dominance": "CoinGecko " + ("key_configured" if COINGECKO_API_KEY else "public_endpoint_attempt"),
             "global_news": "GDELT DOC 2.0",
             "macro_indicators": "FRED " + ("configured" if FRED_API_KEY else "key_required"),
-            "ai_synthesis": "OpenAI " + ("configured" if AI_API_KEY else "key_required")
+            "ai_synthesis": "OpenAI " + ("configured" if AI_API_KEY else "key_required"),
+            "cot_positions": "CFTC public weekly disaggregated futures-only reports",
+            "cross_asset_correlations": "BTC/ETH/gold/silver daily returns",
+            "research_backtesting": "chronological holdout with fee/slippage stress"
         },
         "live_trading": False,
         "supported_timeframes": list(TIMEFRAMES.keys())
@@ -802,7 +805,7 @@ def correlations():
         results.append(pair_data)
 
     result = {
-        "available": bool(results),
+        "available": any(item.get("correlation_30d") is not None or item.get("correlation_90d") is not None for item in results),
         "source": "Binance daily candles + Yahoo Finance/Twelve Data metals daily candles",
         "pairs": results,
         "errors": errors,
