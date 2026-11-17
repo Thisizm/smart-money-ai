@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .pro_analysis import advanced_analysis
 from .backtesting import run_research_backtest
-from .paper_trading import init_paper_db, record_signal, monitor_open_trades, list_paper_trades
+from .paper_trading import init_paper_db, record_signal, monitor_open_trades, list_paper_trades, close_paper_trade
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(APP_DIR)
@@ -1455,6 +1455,29 @@ def api_paper_trading():
 def api_paper_trading_monitor():
     check = monitor_open_trades(get_live_quote)
     return {"monitor": check, **list_paper_trades(150)}
+
+
+@app.post("/api/paper-trading/{trade_id}/close")
+def api_close_paper_trade(trade_id: int):
+    current = list_paper_trades(300)
+    trade = next((item for item in current.get("trades", []) if item.get("id") == trade_id), None)
+    if trade is None:
+        raise HTTPException(404, "معامله آزمایشی پیدا نشد")
+    if trade.get("status") not in ("PENDING_ENTRY", "ACTIVE", "TP1_HIT"):
+        raise HTTPException(409, "این معامله قبلاً بسته شده است")
+    exit_price = None
+    if trade.get("status") in ("ACTIVE", "TP1_HIT"):
+        quote = get_live_quote(trade["market"], trade["symbol"])
+        if not quote.get("available") or quote.get("is_proxy"):
+            raise HTTPException(503, "قیمت معتبر برای بستن معامله در دسترس نیست")
+        age = quote.get("age_seconds")
+        if age is None or age > (60 if trade["market"] == "crypto" else 900):
+            raise HTTPException(503, "قیمت دریافت‌شده قدیمی است؛ کمی بعد دوباره تلاش کن")
+        exit_price = float(quote["price"])
+    result = close_paper_trade(trade_id, exit_price=exit_price)
+    if not result.get("closed"):
+        raise HTTPException(409, result.get("message", "بستن معامله انجام نشد"))
+    return {"success": True, **result, **list_paper_trades(150)}
 
 
 @app.get("/api/quote")
