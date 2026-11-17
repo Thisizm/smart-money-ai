@@ -119,9 +119,12 @@ def aggregate_candles(candles, timeframe):
 
 
 def get_yahoo_metals_candles(market, timeframe):
-    """No-key fallback for spot gold and silver using Yahoo Finance chart data."""
-    ticker = {"gold": "XAUUSD=X", "silver": "XAGUSD=X"}.get(market)
-    if not ticker:
+    """No-key fallback: try spot symbols first, then exchange-traded futures."""
+    tickers = {
+        "gold": ["XAUUSD=X", "GC=F"],
+        "silver": ["XAGUSD=X", "SI=F"],
+    }.get(market)
+    if not tickers:
         raise RuntimeError("Unsupported metal market")
 
     settings = {
@@ -133,50 +136,61 @@ def get_yahoo_metals_candles(market, timeframe):
         "1w": ("1d", "5y", True),
     }
     interval, period, aggregate = settings[timeframe]
-    url = (
-        "https://query1.finance.yahoo.com/v8/finance/chart/"
-        + urllib.parse.quote(ticker, safe="")
-        + "?" + urllib.parse.urlencode({
-            "range": period, "interval": interval, "events": "history"
-        })
-    )
-    data = fetch_json(url, headers={
-        "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (compatible; SmartMoneyAI/2.1)"
-    }, timeout=20)
-    chart = data.get("chart", {})
-    if chart.get("error"):
-        raise RuntimeError(str(chart["error"]))
-    result = (chart.get("result") or [None])[0]
-    if not result:
-        raise RuntimeError("Yahoo Finance returned no chart data")
-    timestamps = result.get("timestamp") or []
-    quote = (result.get("indicators", {}).get("quote") or [{}])[0]
-    candles = []
-    for i, stamp in enumerate(timestamps):
+    ticker_errors = []
+    for ticker in tickers:
         try:
-            op, hi, lo, cl = (
-                quote.get("open", [])[i], quote.get("high", [])[i],
-                quote.get("low", [])[i], quote.get("close", [])[i]
+            url = (
+                "https://query1.finance.yahoo.com/v8/finance/chart/"
+                + urllib.parse.quote(ticker, safe="=")
+                + "?" + urllib.parse.urlencode({
+                    "range": period, "interval": interval, "events": "history"
+                })
             )
-            if None in (op, hi, lo, cl):
-                continue
-            vol = (quote.get("volume") or [None] * len(timestamps))[i]
-            candles.append({
-                "time": int(stamp) * 1000,
-                "open": float(op), "high": float(hi), "low": float(lo),
-                "close": float(cl), "volume": float(vol or 0)
-            })
-        except (IndexError, TypeError, ValueError):
-            continue
-    if aggregate:
-        candles = aggregate_candles(candles, timeframe)
-    if len(candles) < 60:
-        raise RuntimeError(
-            "Yahoo Finance supplied only " + str(len(candles)) +
-            " usable candles for " + timeframe
-        )
-    return candles
+            data = fetch_json(url, headers={
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0 (compatible; SmartMoneyAI/2.2)"
+            }, timeout=20)
+            chart = data.get("chart", {})
+            if chart.get("error"):
+                raise RuntimeError(str(chart["error"]))
+            result = (chart.get("result") or [None])[0]
+            if not result:
+                raise RuntimeError("Yahoo Finance returned no chart data")
+            timestamps = result.get("timestamp") or []
+            quote = (result.get("indicators", {}).get("quote") or [{}])[0]
+            candles = []
+            for i, stamp in enumerate(timestamps):
+                try:
+                    op, hi, lo, cl = (
+                        quote.get("open", [])[i], quote.get("high", [])[i],
+                        quote.get("low", [])[i], quote.get("close", [])[i]
+                    )
+                    if None in (op, hi, lo, cl):
+                        continue
+                    vol = (quote.get("volume") or [None] * len(timestamps))[i]
+                    candles.append({
+                        "time": int(stamp) * 1000,
+                        "open": float(op), "high": float(hi), "low": float(lo),
+                        "close": float(cl), "volume": float(vol or 0)
+                    })
+                except (IndexError, TypeError, ValueError):
+                    continue
+            if aggregate:
+                candles = aggregate_candles(candles, timeframe)
+            if len(candles) < 60:
+                raise RuntimeError(
+                    "Yahoo Finance supplied only " + str(len(candles)) +
+                    " usable candles for " + timeframe
+                )
+            if ticker in ("GC=F", "SI=F"):
+                # Futures are a fallback proxy; their price can differ from spot.
+                for candle in candles:
+                    candle["source_symbol"] = ticker
+            return candles
+        except Exception as exc:
+            ticker_errors.append(ticker + ": " + str(exc)[:150])
+
+    raise RuntimeError("Yahoo Finance symbols failed: " + " | ".join(ticker_errors))
 
 
 def get_twelve_data_metals_candles(symbol, timeframe):
