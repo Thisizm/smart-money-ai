@@ -961,7 +961,7 @@ def status():
             "crypto_derivatives": "Binance public futures funding/OI/long-short + spot order-book snapshot",
             "metals_prices": "Twelve Data XAU/USD and XAG/USD spot when entitled; Yahoo Finance fallback, including COMEX SI=F futures proxy for silver",
             "metal_instrument_note": "Silver SI=F fallback is a COMEX continuous futures proxy, not XAG/USD spot; provider feeds can differ.",
-            "crypto_dominance": "Market-cap dominance from CoinGecko; optional CoinMarketCap fallback; Binance Spot is used for exchange prices, not global dominance",
+            "crypto_dominance": "Market-cap dominance from CoinGecko" + ("; CoinMarketCap fallback key configured" if COINMARKETCAP_API_KEY else "; optional CoinMarketCap fallback key not set") + "; Binance Spot is used for exchange prices, not global dominance",
             "liquidation_heatmap": "CoinGlass aggregated liquidation heatmap " + ("API key configured; Professional/Enterprise plan required" if COINGLASS_API_KEY else "COINGLASS_API_KEY required; Professional/Enterprise plan required"),
             "global_news": "GDELT DOC 2.0",
             "macro_indicators": "FRED " + ("configured" if FRED_API_KEY else "key_required"),
@@ -1070,7 +1070,11 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     result["candle_source"] = (candles[-1].get("source") if candles else None) or ("Binance Spot" if market == "crypto" else "Twelve Data / Yahoo Finance metals fallback")
     result["live_quote"] = get_live_quote(market, symbol)
     if market == "crypto":
-        heatmap = get_coinglass_liquidation_heatmap(symbol)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            heatmap_future = pool.submit(get_coinglass_liquidation_heatmap, symbol)
+            derivatives_future = pool.submit(get_crypto_derivatives, symbol)
+            heatmap = heatmap_future.result()
+            result["derivatives"] = derivatives_future.result()
         result["liquidation_heatmap"] = heatmap
         result["liquidation_context"] = build_liquidation_context(
             result, heatmap, (result["live_quote"].get("price") if result["live_quote"].get("available") else result.get("price"))
@@ -1078,6 +1082,10 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     else:
         result["liquidation_heatmap"] = {"available": False, "note": "نقشه لیکوییدیشن CoinGlass فقط برای بازار کریپتو فعال است."}
         result["liquidation_context"] = {"available": False, "note": "برای فلزات نقشه لیکوییدیشن کریپتو کاربرد ندارد."}
+        result["derivatives"] = {
+            "available": False,
+            "note": "منبع عمومی فعلی برای مشتقات و دفتر سفارش طلا/نقره به این برنامه متصل نیست."
+        }
     chart_bars = completed_candles(candles, timeframe)[-220:]
     result["chart_candles"] = [{
         "time": int(c["time"] // 1000),
@@ -1111,13 +1119,6 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             "position": "aboveBar" if result.get("liquidity_sweep") == "بالا" else "belowBar",
             "color": "#e9b95e", "shape": "circle", "text": "Liquidity sweep"
         })
-    if market == "crypto":
-        result["derivatives"] = get_crypto_derivatives(symbol)
-    else:
-        result["derivatives"] = {
-            "available": False,
-            "note": "منبع عمومی فعلی برای مشتقات و دفتر سفارش طلا/نقره به این برنامه متصل نیست."
-        }
     return result
 
 
@@ -1398,7 +1399,7 @@ def get_coinglass_liquidation_heatmap(symbol, range_name="24h"):
             y_axis = [_as_float(value) for value in (data.get("y_axis") or [])]
             rows = []
             totals = {}
-            for row in (data.get("liquidation_leverage_data") or [])[:30000]:
+            for row in (data.get("liquidation_leverage_data") or [])[:10000]:
                 if not isinstance(row, (list, tuple)) or len(row) < 3:
                     continue
                 try:
@@ -1810,7 +1811,26 @@ async def ai_synthesis(request: Request):
         payload = await request.json()
     except Exception:
         raise HTTPException(400, "بدنه درخواست JSON معتبر نیست")
-    context = json.dumps(payload, ensure_ascii=False)[:12000]
+    technical = payload.get("technical")
+    if isinstance(technical, dict):
+        technical = dict(technical)
+        technical.pop("chart_candles", None)
+        technical.pop("rsi_chart", None)
+        advanced = technical.get("advanced_analysis")
+        if isinstance(advanced, dict):
+            advanced = dict(advanced)
+            advanced.pop("rsi_series", None)
+            technical["advanced_analysis"] = advanced
+        heatmap = technical.get("liquidation_heatmap")
+        if isinstance(heatmap, dict):
+            heatmap = dict(heatmap)
+            heatmap.pop("liquidation_leverage_data", None)
+            heatmap.pop("y_axis", None)
+            heatmap.pop("price_candlesticks", None)
+            heatmap["clusters"] = (heatmap.get("clusters") or [])[:12]
+            technical["liquidation_heatmap"] = heatmap
+        payload["technical"] = technical
+    context = json.dumps(payload, ensure_ascii=False)[:16000]
     prompt = (
         "تو تحلیلگر محتاط بازار هستی. فقط بر اساس داده‌های ورودی تحلیل کن و هیچ عدد یا خبری نساز. "
         "بین داده زنده، داده با تأخیر، تقریب محاسباتی و داده ناموجود تفاوت بگذار. سود قطعی وعده نده. "
