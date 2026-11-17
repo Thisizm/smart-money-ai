@@ -444,6 +444,8 @@ def analyze(candles, market, symbol, timeframe):
     bear += 4 if adx_data["value"] >= 20 and adx_data["minus_di"] > adx_data["plus_di"] else 0
     bull += 4 if volume_confirm and last["close"] >= previous["close"] else 0
     bear += 4 if volume_confirm and last["close"] <= previous["close"] else 0
+    bull = min(100, bull)
+    bear = min(100, bear)
 
     # If a formal structure event is absent, require at least three momentum/trend checks.
     bull_structure_ok = bos_up or choch_up or sweep_low or bullish_fvg
@@ -616,8 +618,8 @@ def get_crypto_derivatives(symbol):
     urls = {
         "funding": "https://fapi.binance.com/fapi/v1/fundingRate?symbol=" + base + "&limit=1",
         "open_interest": "https://fapi.binance.com/fapi/v1/openInterest?symbol=" + base,
-        "long_short": "https://futures-data.binance.com/futures/data/globalLongShortAccountRatio?symbol=" + base + "&period=1h&limit=1",
-        "taker_ratio": "https://futures-data.binance.com/futures/data/takerlongshortRatio?symbol=" + base + "&period=1h&limit=1",
+        "long_short": "https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=" + base + "&period=1h&limit=1",
+        "taker_ratio": "https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=" + base + "&period=1h&limit=1",
         "order_book": "https://data-api.binance.vision/api/v3/depth?symbol=" + base + "&limit=20"
     }
     values, errors = {}, []
