@@ -10,7 +10,26 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 
-DB_PATH = os.getenv("DATABASE_PATH", os.path.join(os.path.dirname(os.path.dirname(__file__)), "alerts.db"))
+def _database_path():
+    configured = os.getenv("DATABASE_PATH")
+    if configured:
+        return configured
+    root_dir = os.path.dirname(os.path.dirname(__file__))
+    persistent_dir = os.getenv("PERSISTENT_DATA_DIR", "/var/data")
+    if os.path.isdir(persistent_dir) and os.access(persistent_dir, os.W_OK):
+        persistent_path = os.path.join(persistent_dir, "alerts.db")
+        legacy_path = os.path.join(root_dir, "alerts.db")
+        if not os.path.exists(persistent_path) and os.path.exists(legacy_path):
+            try:
+                import shutil
+                shutil.copy2(legacy_path, persistent_path)
+            except OSError:
+                pass
+        return persistent_path
+    return os.path.join(root_dir, "alerts.db")
+
+
+DB_PATH = _database_path()
 _LOCK = threading.RLock()
 
 
@@ -19,6 +38,9 @@ def _now():
 
 
 def _connect():
+    if DATABASE_URL:
+        import psycopg2
+        return _PostgresConnection(psycopg2.connect(DATABASE_URL, connect_timeout=15))
     con = sqlite3.connect(DB_PATH, timeout=20)
     con.row_factory = sqlite3.Row
     return con
@@ -26,46 +48,90 @@ def _connect():
 
 def init_paper_db():
     with _LOCK, _connect() as con:
-        con.execute("PRAGMA journal_mode=WAL")
-        con.execute("""
-        CREATE TABLE IF NOT EXISTS paper_trades (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fingerprint TEXT NOT NULL UNIQUE,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            market TEXT NOT NULL,
-            symbol TEXT NOT NULL,
-            timeframe TEXT NOT NULL,
-            side TEXT NOT NULL,
-            signal_candle_time INTEGER,
-            entry_price REAL NOT NULL,
-            entry_low REAL,
-            entry_high REAL,
-            signal_entry REAL,
-            last_quote_price REAL,
-            last_quote_at TEXT,
-            stop_loss REAL NOT NULL,
-            target_1 REAL NOT NULL,
-            target_2 REAL,
-            target_3 REAL,
-            status TEXT NOT NULL,
-            tp1_hit_at TEXT,
-            closed_at TEXT,
-            exit_price REAL,
-            exit_reason TEXT,
-            realized_r REAL NOT NULL DEFAULT 0,
-            realized_return_percent REAL NOT NULL DEFAULT 0,
-            source TEXT,
-            note TEXT,
-            quantity REAL NOT NULL DEFAULT 0,
-            notional REAL NOT NULL DEFAULT 0,
-            margin_used REAL NOT NULL DEFAULT 0,
-            leverage REAL NOT NULL DEFAULT 1,
-            initial_balance REAL NOT NULL DEFAULT 10000,
-            risk_cash REAL NOT NULL DEFAULT 50
-        )
-        """)
-        columns = {row["name"] for row in con.execute("PRAGMA table_info(paper_trades)")}
+        if not DATABASE_URL:
+            con.execute("PRAGMA journal_mode=WAL")
+        if DATABASE_URL:
+            con.execute("""
+            CREATE TABLE IF NOT EXISTS paper_trades (
+                id BIGSERIAL PRIMARY KEY,
+                fingerprint TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                market TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                side TEXT NOT NULL,
+                signal_candle_time BIGINT,
+                entry_price DOUBLE PRECISION NOT NULL,
+                entry_low DOUBLE PRECISION,
+                entry_high DOUBLE PRECISION,
+                signal_entry DOUBLE PRECISION,
+                last_quote_price DOUBLE PRECISION,
+                last_quote_at TEXT,
+                stop_loss DOUBLE PRECISION NOT NULL,
+                target_1 DOUBLE PRECISION NOT NULL,
+                target_2 DOUBLE PRECISION,
+                target_3 DOUBLE PRECISION,
+                status TEXT NOT NULL,
+                tp1_hit_at TEXT,
+                closed_at TEXT,
+                exit_price DOUBLE PRECISION,
+                exit_reason TEXT,
+                realized_r DOUBLE PRECISION NOT NULL DEFAULT 0,
+                realized_return_percent DOUBLE PRECISION NOT NULL DEFAULT 0,
+                source TEXT,
+                note TEXT,
+                quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+                notional DOUBLE PRECISION NOT NULL DEFAULT 0,
+                margin_used DOUBLE PRECISION NOT NULL DEFAULT 0,
+                leverage DOUBLE PRECISION NOT NULL DEFAULT 1,
+                initial_balance DOUBLE PRECISION NOT NULL DEFAULT 10000,
+                risk_cash DOUBLE PRECISION NOT NULL DEFAULT 50
+            )
+            """)
+            columns = {row["column_name"] for row in con.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='paper_trades'"
+            ).fetchall()}
+        else:
+            con.execute("""
+            CREATE TABLE IF NOT EXISTS paper_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fingerprint TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                market TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                side TEXT NOT NULL,
+                signal_candle_time INTEGER,
+                entry_price REAL NOT NULL,
+                entry_low REAL,
+                entry_high REAL,
+                signal_entry REAL,
+                last_quote_price REAL,
+                last_quote_at TEXT,
+                stop_loss REAL NOT NULL,
+                target_1 REAL NOT NULL,
+                target_2 REAL,
+                target_3 REAL,
+                status TEXT NOT NULL,
+                tp1_hit_at TEXT,
+                closed_at TEXT,
+                exit_price REAL,
+                exit_reason TEXT,
+                realized_r REAL NOT NULL DEFAULT 0,
+                realized_return_percent REAL NOT NULL DEFAULT 0,
+                source TEXT,
+                note TEXT,
+                quantity REAL NOT NULL DEFAULT 0,
+                notional REAL NOT NULL DEFAULT 0,
+                margin_used REAL NOT NULL DEFAULT 0,
+                leverage REAL NOT NULL DEFAULT 1,
+                initial_balance REAL NOT NULL DEFAULT 10000,
+                risk_cash REAL NOT NULL DEFAULT 50
+            )
+            """)
+            columns = {row["name"] for row in con.execute("PRAGMA table_info(paper_trades)")}
         for name in ("entry_low", "entry_high", "last_quote_price"):
             if name not in columns:
                 con.execute("ALTER TABLE paper_trades ADD COLUMN " + name + " REAL")
@@ -308,16 +374,21 @@ def close_paper_trade(trade_id, exit_price=None):
 def list_paper_trades(limit=100):
     limit = max(1, min(int(limit), 300))
     with _LOCK, _connect() as con:
-        rows = [dict(r) for r in con.execute(
-            "SELECT * FROM paper_trades ORDER BY id DESC LIMIT ?", (limit,)
+        active_rows = [dict(r) for r in con.execute(
+            "SELECT * FROM paper_trades WHERE status IN ('PENDING_ENTRY','ACTIVE','TP1_HIT') ORDER BY created_at DESC, id DESC"
         ).fetchall()]
+        history_rows = [dict(r) for r in con.execute(
+            "SELECT * FROM paper_trades WHERE status NOT IN ('PENDING_ENTRY','ACTIVE','TP1_HIT') ORDER BY COALESCE(closed_at, updated_at, created_at) DESC, id DESC LIMIT ?", (limit,)
+        ).fetchall()]
+        rows = active_rows + history_rows
         stats = con.execute("""
             SELECT COUNT(*) AS total,
                    SUM(CASE WHEN status IN ('ACTIVE','TP1_HIT') THEN 1 ELSE 0 END) AS active,
                    SUM(CASE WHEN status IN ('TP1_HIT','TP2_HIT','SL_HIT','SL_AFTER_TP1') THEN 1 ELSE 0 END) AS tp1_touched,
                    SUM(CASE WHEN status='TP2_HIT' THEN 1 ELSE 0 END) AS tp2,
                    SUM(CASE WHEN status IN ('SL_HIT','SL_AFTER_TP1') THEN 1 ELSE 0 END) AS stopped,
-                   SUM(CASE WHEN status IN ('TP2_HIT','SL_HIT','SL_AFTER_TP1','MANUAL_CLOSED') THEN 1 ELSE 0 END) AS closed
+                   SUM(CASE WHEN status IN ('TP2_HIT','SL_HIT','SL_AFTER_TP1','MANUAL_CLOSED','INVALIDATED_BEFORE_ENTRY') THEN 1 ELSE 0 END) AS closed,
+                   SUM(CASE WHEN status='PENDING_ENTRY' THEN 1 ELSE 0 END) AS pending_entry
             FROM paper_trades
         """).fetchone()
         closed_rows = con.execute("""
@@ -344,11 +415,17 @@ def list_paper_trades(limit=100):
     wins = sum(1 for x in closed_r if x > 0)
     open_pnl = round(sum(float(row.get("total_pnl") or 0) for row in rows
                          if row.get("status") in ("ACTIVE", "TP1_HIT")), 4)
+    active_statuses = {"PENDING_ENTRY", "ACTIVE", "TP1_HIT"}
+    active_trades = [row for row in rows if row.get("status") in active_statuses]
+    history_trades = [row for row in rows if row.get("status") not in active_statuses]
+    history_trades.sort(key=lambda row: (row.get("closed_at") or row.get("updated_at") or row.get("created_at") or ""), reverse=True)
     return {
         "available": True, "mode": "PAPER_ONLY",
+        "active_trades": active_trades,
+        "history_trades": history_trades,
         "stats": {
             "total": int(stats["total"] or 0), "active": int(stats["active"] or 0),
-            "pending_entry": sum(1 for row in rows if row["status"] == "PENDING_ENTRY"),
+            "pending_entry": int(stats["pending_entry"] or 0),
             "tp1_touched": int(stats["tp1_touched"] or 0), "tp2": int(stats["tp2"] or 0),
             "stopped": int(stats["stopped"] or 0), "closed": int(stats["closed"] or 0),
             "win_rate_percent": round(wins / len(closed_r) * 100, 2) if closed_r else None,

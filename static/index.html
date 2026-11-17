@@ -3,16 +3,26 @@
 <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#0a1020;color:#e8eefb;font-family:Tahoma,Arial}header,.panel{background:#121d32;border:1px solid #293a59;border-radius:13px;padding:14px;margin:12px}header{border-radius:0;margin:0}h1{font-size:21px}.wrap{max-width:1000px;margin:auto;padding:10px}.tabs,.row{display:flex;gap:8px;flex-wrap:wrap}.tabs{overflow:auto}.tab{width:auto}button,select{background:#0b1629;border:1px solid #405477;color:white;border-radius:9px;padding:11px}button{background:#285bd0;cursor:pointer}.field{flex:1;min-width:120px}label{display:block;font-size:12px;color:#aebbd0;margin-bottom:6px}select{width:100%}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.metric{background:#0b172a;padding:10px;border-radius:9px;overflow-wrap:anywhere}.muted,.small{color:#9cabc5;font-size:12px;line-height:1.8}.buy{color:#46d39a}.sell{color:#ff7a85}.wait{color:#f0c66a}.item{border-top:1px solid #273653;padding:10px 0;font-size:13px;line-height:1.8}.item a{color:#9fc2ff}pre{white-space:pre-wrap;font-family:Tahoma;line-height:1.9}section[hidden]{display:none}.chart-toggles{display:flex;flex-wrap:wrap;gap:10px;margin:8px 0;color:#d8e3f5;font-size:12px}.chart-toggles label{display:flex;align-items:center;gap:5px;background:#111f35;border:1px solid #334766;border-radius:7px;padding:6px 8px}.chart-toggles input{accent-color:#60a5fa}.chart-panel{background:#0b172a;border:1px solid #273653;border-radius:11px;padding:10px;margin:12px 0}.chart-head{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px}#price-chart{width:100%;height:350px;direction:ltr;overflow:hidden;position:relative}#rsi-chart{width:100%;height:130px;direction:ltr;overflow:hidden;margin-top:8px}#liq-heatmap{display:block;width:100%;height:250px;direction:ltr;background:#091426;border:1px solid #273653;border-radius:8px}#scenario-analysis{white-space:pre-line;line-height:2;font-size:13px;background:#0b172a;border-radius:9px;padding:12px}.chart-note{margin-top:8px}@media(max-width:600px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}#price-chart{height:320px}}.smart-summary{line-height:2;margin:8px 0;background:#0b172a;padding:10px;border-radius:8px}.chart-legend{display:flex;gap:7px;flex-wrap:wrap;margin:9px 0}.legend-chip{border:1px solid #334766;border-radius:7px;padding:5px 8px;font-size:11px;color:#d8e3f5;background:#111f35}.legend-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:5px}.rsi-caption{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:5px}@media(max-width:600px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}#price-chart{height:300px}#rsi-chart{height:115px}#liq-heatmap{height:220px}.heatmap-clusters{grid-template-columns:1fr}}
+
+/* Persistent-trade sections and expanded chart controls */
+.paper-history{margin-top:18px;border:1px solid #263953;border-radius:12px;padding:12px}
+.paper-history summary{cursor:pointer;font-weight:700;margin-bottom:12px}
+.paper-trade{margin:10px 0;line-height:1.8}
+.chart-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.chart-panel.chart-fullscreen{position:fixed!important;inset:0!important;z-index:99999!important;background:#081426!important;padding:14px!important;overflow:auto!important;border-radius:0!important}
+.chart-panel.chart-fullscreen #price-chart{height:calc(100vh - 230px)!important;min-height:320px}
+.chart-panel.chart-fullscreen #rsi-chart{height:130px!important}
+body.chart-is-fullscreen{overflow:hidden}
 </style></head><body><header><div class="wrap"><h1>SMART MONEY AI</h1><div class="muted">تحلیل کریپتو، طلا و نقره | نسخه آزمایشی توسعه‌یافته</div></div></header>
 <main class="wrap">
 <div class="tabs"><button class="tab" data-id="analysis">تحلیل</button><button class="tab" data-id="dominance">دامیننس</button><button class="tab" data-id="context">اخبار و اقتصاد</button><button class="tab" data-id="scanner">اسکنر</button><button class="tab" data-id="paper">معاملات آزمایشی</button><button class="tab" data-id="ai">AI</button></div>
-<section id="analysis"><div class="panel"><div class="row"><div class="field"><label>بازار</label><select id="market" onchange="symbols()"><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div><div class="field"><label>جست‌وجوی نماد</label><input id="symbol-search" type="search" placeholder="مثلاً BTC یا ETH" oninput="filterSymbols()"><label style="margin-top:7px">نماد</label><select id="symbol"></select><div id="coin-count" class="small"></div></div><div class="field"><label>تایم‌فریم</label><select id="tf"><option>5m</option><option selected>15m</option><option>1h</option><option>4h</option><option>1d</option><option>1w</option></select></div></div><div class="row" style="margin-top:10px"><button onclick="analyze()">تحلیل تکنیکال</button><button onclick="mtf()">چندتایم‌فریمی</button><button onclick="backtest()">بک‌تست تاریخی</button></div><div id="astatus" class="muted"></div></div><div id="ares" class="panel" hidden><h3 id="signal"></h3><div class="chart-panel"><div class="chart-head"><b>نمودار قیمت و پلن معامله</b><span id="chart-source" class="small"></span></div><div class="chart-toggles" aria-label="لایه‌های نمودار">
+<section id="analysis"><div class="panel"><div class="row"><div class="field"><label>بازار</label><select id="market" onchange="symbols()"><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div><div class="field"><label>جست‌وجوی نماد</label><input id="symbol-search" type="search" placeholder="مثلاً BTC یا ETH" oninput="filterSymbols()"><label style="margin-top:7px">نماد</label><select id="symbol"></select><div id="coin-count" class="small"></div></div><div class="field"><label>تایم‌فریم</label><select id="tf"><option>5m</option><option selected>15m</option><option>1h</option><option>4h</option><option>1d</option><option>1w</option></select></div></div><div class="row" style="margin-top:10px"><button onclick="analyze()">تحلیل تکنیکال</button><button onclick="mtf()">چندتایم‌فریمی</button><button onclick="backtest()">بک‌تست تاریخی</button></div><div id="astatus" class="muted"></div></div><div id="ares" class="panel" hidden><h3 id="signal"></h3><div class="chart-panel"><div class="chart-head"><b>نمودار قیمت و پلن معامله</b><span id="chart-source" class="small"></span><button type="button" onclick="toggleChartFullscreen()" id="chart-fullscreen-btn">بزرگ‌نمایی نمودار</button></div><div class="chart-toggles" aria-label="لایه‌های نمودار">
 <label><input type="checkbox" id="show-support" onchange="renderChart(lastA)"> حمایت</label>
 <label><input type="checkbox" id="show-resistance" onchange="renderChart(lastA)"> مقاومت</label>
 <label><input type="checkbox" id="show-bull-ob" onchange="renderChart(lastA)"> اوردربلاک صعودی</label>
 <label><input type="checkbox" id="show-bear-ob" onchange="renderChart(lastA)"> اوردربلاک نزولی</label>
 </div><div id="price-chart"></div><div id="chart-levels-legend" class="chart-legend"></div><div class="rsi-caption"><b>RSI وایلدر ۱۴</b><span id="rsi-current" class="small">پس از تحلیل نمایش داده می‌شود</span></div><div id="rsi-chart"></div><div class="small chart-note">لایه‌های حمایت، مقاومت و اوردربلاک را از گزینه‌های بالا جداگانه روشن یا خاموش کن.</div></div><div class="item"><h3>خلاصه تحلیل</h3><div id="scenario-analysis">پس از تحلیل نمایش داده می‌شود.</div></div><div class="item"><h3>ورود هوشمند</h3><div id="smart-entry">پس از تحلیل نمایش داده می‌شود.</div></div><div class="item"><h3>واگرایی‌ها</h3><div id="divergence-panel" class="small">پس از تحلیل نمایش داده می‌شود.</div></div><div id="metrics" class="metrics"></div><div id="livequote" class="item">پس از تحلیل، نمایش قیمت هر ۵ ثانیه تازه‌سازی می‌شود؛ دریافت مجدد قیمت فلزات برای رعایت محدودیت API حداکثر هر ۳۰ ثانیه انجام می‌شود.</div><ul id="reasons"></ul><div id="mtfout"></div><div id="prodetails"></div><div id="backtestout"></div><p class="small">امتیاز تجربی احتمال موفقیت نیست. پروفایل حجم، سطوح نقدینگی و Order Block از OHLCV عمومی تقریب زده می‌شوند و داده نهادی یا تیک‌به‌تیک نیستند.</p></div></section>
-<section id="paper" hidden><div class="panel"><h3>معاملات آزمایشی خودکار</h3><p class="small">هر سیگنال BUY/SELL معتبر با قیمت زنده ثبت می‌شود؛ قیمت ورود، استاپ و اهداف پس از ثبت ثابت می‌مانند. هیچ سفارش واقعی به صرافی ارسال نمی‌شود.</p><button onclick="refreshPaperTrading()">به‌روزرسانی و بررسی قیمت‌ها</button><div id="paper-status" class="muted">در حال دریافت وضعیت معاملات…</div><div id="paper-stats" class="metrics"></div><h3>معاملات و نتایج</h3><div id="paper-list"><div class="item">هنوز معامله‌ای ثبت نشده است.</div></div><p class="small">محاسبه فرضی: ۵۰٪ حجم در TP1 و ۵۰٪ باقی‌مانده در TP2 بسته می‌شود. اگر پس از TP1 استاپ لمس شود، سود/ضرر ترکیبی ثبت می‌شود. قیمت‌ها از فید عمومی و بررسی دوره‌ای‌اند؛ ترتیب برخوردهای داخل یک فاصله پایش ممکن است دقیقاً قابل بازسازی نباشد.</p></div></section>
+<section id="paper" hidden><div class="panel"><h3>معاملات آزمایشی خودکار</h3><p class="small">معامله‌ها در پایگاه داده ذخیره می‌شوند و با تازه‌سازی صفحه از بین نمی‌روند. هیچ سفارش واقعی به صرافی ارسال نمی‌شود.</p><button onclick="refreshPaperTrading()">به‌روزرسانی و بررسی قیمت‌ها</button><div id="paper-status" class="muted">در حال دریافت وضعیت معاملات…</div><div id="paper-stats" class="metrics"></div><h3>معاملات فعال</h3><div id="paper-active-list"><div class="item">در حال بارگذاری…</div></div><details class="paper-history" open><summary>تاریخچه معاملات بسته‌شده و لغوشده</summary><div id="paper-history-list"><div class="item">هنوز سابقه‌ای ثبت نشده است.</div></div></details><p class="small">۵۰٪ حجم در هدف اول و ۵۰٪ باقی‌مانده در هدف دوم بسته می‌شود. اگر سایت در حالت خواب باشد، پایش قیمت ممکن است متوقف شود؛ بعد از بازگشت سایت، قیمت دوباره بررسی می‌شود.</p></div></section>
 <section id="dominance" hidden><div class="panel"><h3>دامیننس بازار</h3><button onclick="dominance()">به‌روزرسانی</button><div id="dstatus" class="muted"></div><div id="dmetrics" class="metrics"></div><div id="dnote" class="small"></div></div></section>
 <section id="context" hidden><div class="panel"><h3>اخبار و عوامل اثرگذار</h3><div class="row"><div class="field"><label>دارایی</label><select id="asset"><option value="gold">طلا</option><option value="silver">نقره</option><option value="crypto">کریپتو</option></select></div><button onclick="context()">دریافت اخبار و اقتصاد</button><button onclick="correlations()">همبستگی بازارها</button></div><div id="corrout"></div><div id="cstatus" class="muted"></div><h3>تقویم اقتصادی آمریکا</h3><div id="calendar" class="item">در حال دریافت تقویم…</div><div id="factors"></div><h3>موقعیت‌گیری هفتگی COT طلا/نقره</h3><div id="cot"></div><h3>تقویم اقتصادی</h3><div class="item">تقویم رسمی Forex Factory را باز کن؛ ساعت‌ها و درجه اهمیت خبرها را آنجا ببین. این سایت API رسمی عمومی مستند ندارد و استفاده خودکار از داده‌هایش محدودیت شرایط استفاده دارد، بنابراین در این نسخه داده‌اش را بدون مجوز اسکرپ نمی‌کنیم.<br><a href="https://www.forexfactory.com/calendar/" target="_blank" rel="noopener">باز کردن تقویم Forex Factory</a></div><h3>اخبار</h3><div id="news"></div><h3>شاخص‌های اقتصاد آمریکا</h3><div id="macro"></div></div></section>
 <section id="scanner" hidden><div class="panel"><h3>اسکنر بازار</h3><div class="row"><div class="field"><label>بازار</label><select id="sm"><option value="all">همه</option><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div><div class="field"><label>تایم‌فریم</label><select id="st"><option>15m</option><option>1h</option><option>4h</option><option>1d</option></select></div></div><button onclick="scanner()" style="margin-top:10px">شروع اسکن</button><div id="sstatus" class="muted"></div><div id="sresults"></div></div></section>
@@ -97,11 +107,20 @@ function renderSmartEntry(d){
   '<br>قیمت بی‌اعتبارشدن معامله: '+fmt(plan.stop_loss)+'<br>هدف نقدینگی اول: '+fmt((plan.targets||[])[0])+'</div>'+
   '<div class="small">'+stateNote+'</div>';
 }
+function toggleChartFullscreen(){
+ const panel=document.querySelector(".chart-panel");
+ if(!panel)return;
+ const full=panel.classList.toggle("chart-fullscreen");
+ const button=document.getElementById("chart-fullscreen-btn");
+ if(button)button.textContent=full?"بستن بزرگ‌نمایی":"بزرگ‌نمایی نمودار";
+ document.body.classList.toggle("chart-is-fullscreen",full);
+ setTimeout(()=>{if(lastA)renderChart(lastA);},80);
+}
 function renderChart(d){
  if(!d)return;
  const el=document.getElementById("price-chart"),rsiEl=document.getElementById("rsi-chart");
  const source=document.getElementById("chart-source");
- source.textContent="منبع کندل: "+(d.chart_source||d.candle_source||"نامشخص")+" | "+(d.timeframe||"");
+ source.textContent="منبع: "+(d.chart_source||d.candle_source||"نامشخص")+" | "+(d.timeframe||"")+" | "+(d.chart_candles||[]).length+" کندل";
  if(priceChart){priceChart.remove();priceChart=null}
  if(rsiChart){rsiChart.remove();rsiChart=null}
  if(chartResizeObserver){chartResizeObserver.disconnect();chartResizeObserver=null}
@@ -118,6 +137,8 @@ function renderChart(d){
   grid:{vertLines:{color:"#17253b"},horzLines:{color:"#17253b"}},
   rightPriceScale:{borderColor:"#405477",scaleMargins:{top:0.1,bottom:0.1}},
   timeScale:{borderColor:"#405477",timeVisible:true,secondsVisible:false},
+  handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:true},
+  handleScale:{axisPressedMouseMove:true,mouseWheel:true,pinch:true},
   crosshair:{mode:LightweightCharts.CrosshairMode.Normal},
   localization:{locale:"en-US"}
  });
@@ -295,18 +316,35 @@ async function closePaperTrade(id){
   await refreshPaperTrading();
  }catch(e){alert("خطا: "+e.message)}
 }
+function paperTradeCard(t,active){
+ const safeSymbol=String(t.symbol||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+ const when=(v)=>v?new Date(v).toLocaleString("fa-IR"):"—";
+ const pnl=Number(t.total_pnl||0);
+ return '<div class="item paper-trade"><b>'+safeSymbol+'</b> | '+(t.market||"")+' | '+(t.timeframe||"")+' | '+(t.side==="LONG"?"خرید":"فروش")+
+ '<br><b>'+paperStatusLabel(t.status)+'</b> | اهرم مجازی: '+fmt(t.leverage)+'x | حجم: '+fmt(t.quantity)+
+ '<br>ورود: '+(t.status==="PENDING_ENTRY"?"در انتظار":fmt(t.entry_price))+' | خروج: '+fmt(t.exit_price)+
+ '<br>قیمت آخر: '+fmt(t.last_quote_price)+' | حد ضرر: '+fmt(t.stop_loss)+
+ '<br>هدف ۱: '+fmt(t.target_1)+' | هدف ۲: '+fmt(t.target_2)+
+ '<br><b class="'+(pnl>=0?"buy":"sell")+'">سود/ضرر: '+(pnl>0?"+":"")+fmt(pnl)+'</b> | نتیجه: '+(t.realized_r>0?"+":"")+fmt(t.realized_r)+'R'+
+ '<br><span class="small">ثبت: '+when(t.created_at)+' | '+(active?"آخرین بررسی: "+when(t.last_quote_at):"بسته‌شدن: "+when(t.closed_at))+'</span>'+
+ (active?'<br><button onclick="closePaperTrade('+t.id+')">'+(t.status==="PENDING_ENTRY"?"لغو ورود":"بستن معامله")+'</button>':'')+
+ (t.exit_reason?'<br><span class="small">علت پایان: '+String(t.exit_reason)+'</span>':'')+'</div>';
+}
 async function refreshPaperTrading(){
- const statusEl=document.getElementById("paper-status"),statsEl=document.getElementById("paper-stats"),listEl=document.getElementById("paper-list");
- if(!statusEl||!statsEl||!listEl)return;
+ const statusEl=document.getElementById("paper-status"),statsEl=document.getElementById("paper-stats");
+ const activeEl=document.getElementById("paper-active-list"),historyEl=document.getElementById("paper-history-list");
+ if(!statusEl||!statsEl||!activeEl||!historyEl)return;
  statusEl.textContent="در حال بررسی قیمت معاملات آزمایشی…";
  try{
   const response=await fetch("/api/paper-trading/monitor",{method:"POST"});
   const d=await response.json();if(!response.ok)throw new Error(d.detail||"خطای دریافت اطلاعات");
   const x=d.stats||{};
-  statsEl.innerHTML=metric("کل سیگنال‌های ثبت‌شده",x.total||0)+metric("در انتظار ورود",x.pending_entry||0)+metric("معاملات فعال",x.active||0)+metric("بسته‌شده",x.closed||0)+metric("نرخ برد معاملات بسته",x.win_rate_percent==null?"—":x.win_rate_percent+"%")+metric("مجموع نتیجه",((x.net_r||0)>0?"+":"")+(x.net_r??0)+"R")+metric("سود/ضرر شناور",((x.open_pnl||0)>0?"+":"")+fmt(x.open_pnl))+metric("سرمایه مجازی",fmt(x.virtual_balance_per_trade))+metric("برخورد به TP1",x.tp1_touched||0)+metric("برخورد به TP2",x.tp2||0)+metric("استاپ",x.stopped||0);
-  const rows=d.trades||[];
-  listEl.innerHTML=rows.length?rows.map(t=>'<div class="item"><b>'+String(t.symbol||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))+'</b> | '+(t.market||"")+' | '+(t.timeframe||"")+' | '+(t.side==="LONG"?"خرید":"فروش")+'<br><b>'+paperStatusLabel(t.status)+'</b> | اهرم مجازی: '+fmt(t.leverage)+'x | حجم: '+fmt(t.quantity)+' | ارزش پوزیشن: '+fmt(t.notional)+'<br>مارجین درگیر: '+fmt(t.margin_used)+' از '+fmt(t.initial_balance)+' | ریسک اولیه: '+fmt(t.risk_cash)+'<br>ورود: '+(t.status==='PENDING_ENTRY'?'در انتظار':fmt(t.entry_price))+' | قیمت زنده: '+fmt(t.last_quote_price)+' | استاپ: '+fmt(t.stop_loss)+'<br>TP1: '+fmt(t.target_1)+' | TP2: '+fmt(t.target_2)+' | حجم باز: '+fmt((t.remaining_fraction||0)*100)+'%<br><b class="'+(t.total_pnl>=0?"buy":"sell")+'">سود/ضرر کل: '+(t.total_pnl>0?"+":"")+fmt(t.total_pnl)+' | شناور: '+(t.unrealized_pnl>0?"+":"")+fmt(t.unrealized_pnl)+' | بازده مارجین: '+fmt(t.return_on_margin_percent)+'%</b><br>نتیجه: '+(t.realized_r>0?"+":"")+(fmt(t.realized_r))+'R | '+(t.exit_reason||"در حال پیگیری")+(["PENDING_ENTRY","ACTIVE","TP1_HIT"].includes(t.status)?'<br><button onclick="closePaperTrade('+t.id+')">'+(t.status==="PENDING_ENTRY"?"لغو ورود آزمایشی":"بستن معامله آزمایشی")+'</button>':'')+'</div>').join(""):'<div class="item">هنوز سیگنال واجد شرایطی ثبت نشده است. فقط سیگنال‌های دارای قیمت زنده تازه و سطوح معتبر وارد تست می‌شوند.</div>';
-  statusEl.textContent="حساب مجازی: 10,000 | ریسک هر معامله: 0.5% | اهرم خودکار: 1x تا 5x | آخرین بررسی: "+new Date().toLocaleTimeString("fa-IR")+" | سفارش واقعی: خاموش";
+  statsEl.innerHTML=metric("کل معاملات",x.total||0)+metric("در انتظار ورود",x.pending_entry||0)+metric("معاملات فعال",x.active||0)+metric("پایان‌یافته",x.closed||0)+metric("نرخ برد",x.win_rate_percent==null?"—":x.win_rate_percent+"%")+metric("مجموع نتیجه",((x.net_r||0)>0?"+":"")+(x.net_r??0)+"R")+metric("سود/ضرر شناور",((x.open_pnl||0)>0?"+":"")+fmt(x.open_pnl))+metric("سرمایه مجازی",fmt(x.virtual_balance_per_trade));
+  const active=d.active_trades||[];
+  const history=d.history_trades||[];
+  activeEl.innerHTML=active.length?active.map(t=>paperTradeCard(t,true)).join(""):'<div class="item">معامله فعالی وجود ندارد.</div>';
+  historyEl.innerHTML=history.length?history.map(t=>paperTradeCard(t,false)).join(""):'<div class="item">هنوز معامله‌ای بسته یا لغو نشده است.</div>';
+  statusEl.textContent="حساب مجازی: 10,000 | ریسک هر معامله: 0.5% | اهرم: 1x تا 5x | آخرین بررسی: "+new Date().toLocaleTimeString("fa-IR")+" | فقط آزمایشی";
  }catch(e){statusEl.textContent="خطا در دریافت معاملات: "+e.message}
 }
 async function status(){
