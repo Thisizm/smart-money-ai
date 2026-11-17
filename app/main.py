@@ -33,13 +33,14 @@ WEBHOOK_TOKEN = os.getenv("WEBHOOK_TOKEN", "")
 app = FastAPI(title="Smart Money AI | Crypto, Gold & Silver")
 app.mount("/static", StaticFiles(directory=os.path.join(ROOT_DIR, "static")), name="static")
 
-CRYPTO = [
+CRYPTO_DEFAULT = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
     "ADAUSDT", "DOGEUSDT", "LINKUSDT", "AVAXUSDT", "LTCUSDT",
     "TRXUSDT", "DOTUSDT", "BCHUSDT", "NEARUSDT", "UNIUSDT",
     "SUIUSDT", "TONUSDT", "ETCUSDT", "APTUSDT", "ARBUSDT"
 ]
-METALS = {"gold": "XAU/USD", "silver": "XAG/USD"}
+CRYPTO = list(CRYPTO_DEFAULT)
+METALS = {"gold": "XAUUSDT", "silver": "XAGUSDT"}
 TIMEFRAMES = {
     "5m": {"binance": "5m", "twelve": "5min"},
     "15m": {"binance": "15m", "twelve": "15min"},
@@ -54,6 +55,8 @@ GDELT_LAST_REQUEST_AT = 0.0
 MACRO_CACHE = {"at": 0, "data": None}
 QUOTE_CACHE = {}
 QUOTE_CACHE_LOCK = threading.Lock()
+BINANCE_SYMBOLS_CACHE = {"at": 0.0, "symbols": list(CRYPTO_DEFAULT)}
+BINANCE_SYMBOLS_LOCK = threading.Lock()
 
 
 def utc_now():
@@ -97,6 +100,42 @@ def fetch_json(url, headers=None, timeout=15):
         raise RuntimeError("Provider HTTP " + str(exc.code) + ": " + body[:180])
     except Exception as exc:
         raise RuntimeError("Provider connection error: " + str(exc)[:160])
+
+
+def get_binance_spot_symbols():
+    """Return all currently trading Binance Spot USDT pairs, with major pairs first."""
+    now = time.time()
+    with BINANCE_SYMBOLS_LOCK:
+        cached = BINANCE_SYMBOLS_CACHE.get("symbols") or []
+        if cached and now - BINANCE_SYMBOLS_CACHE.get("at", 0) < 3600:
+            return list(cached)
+        try:
+            data = fetch_json(
+                "https://data-api.binance.vision/api/v3/exchangeInfo?permissions=SPOT",
+                timeout=15
+            )
+            eligible = set()
+            for item in data.get("symbols", []):
+                if item.get("status") != "TRADING" or item.get("quoteAsset") != "USDT":
+                    continue
+                if item.get("isSpotTradingAllowed") is False:
+                    continue
+                symbol = item.get("symbol")
+                if symbol:
+                    eligible.add(symbol)
+            if not eligible:
+                raise RuntimeError("Binance returned no active USDT spot pairs")
+            preferred = [symbol for symbol in CRYPTO_DEFAULT if symbol in eligible]
+            symbols = preferred + sorted(eligible.difference(preferred))
+            BINANCE_SYMBOLS_CACHE.update({"at": now, "symbols": symbols})
+            return list(symbols)
+        except Exception:
+            # Keep the app usable during a temporary Binance metadata outage.
+            BINANCE_SYMBOLS_CACHE.update({
+                "at": now - 3540,
+                "symbols": list(CRYPTO_DEFAULT)
+            })
+            return list(CRYPTO_DEFAULT)
 
 
 
@@ -244,7 +283,7 @@ def get_live_quote(market, symbol):
     now = time.time()
     with QUOTE_CACHE_LOCK:
         cached = QUOTE_CACHE.get(cache_key)
-        cache_ttl = 3 if market == "crypto" else 30
+        cache_ttl = 3
         if cached and now - cached["at"] < cache_ttl:
             cached_data = dict(cached["data"])
             source_timestamp = cached_data.get("source_timestamp")
@@ -274,88 +313,23 @@ def get_live_quote(market, symbol):
             errors.append("Binance ticker: " + str(exc)[:140])
 
     elif market in METALS:
-        if TWELVE_DATA_API_KEY:
-            try:
-                params = urllib.parse.urlencode({
-                    "symbol": symbol, "apikey": TWELVE_DATA_API_KEY, "timezone": "UTC"
-                })
-                data = fetch_json("https://api.twelvedata.com/quote?" + params, timeout=12)
-                if data.get("close") is None:
-                    raise RuntimeError(str(data.get("message") or data.get("status") or "Quote has no close price"))
-                price = float(data["close"])
-                stamp = data.get("last_quote_at") or data.get("timestamp")
-                stamp = int(stamp) if stamp is not None else None
-                result = {
-                    "available": True, "price": price, "source": "Twelve Data Quote",
-                    "source_symbol": symbol,
-                    "source_timestamp": datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat() if stamp else None,
-                    "age_seconds": max(0, int(now - stamp)) if stamp else None,
-                    "is_market_open": data.get("is_market_open"), "is_proxy": False,
-                    "note": "قیمت ارائه‌دهنده Twelve Data؛ دسترسی real-time به نماد و پلن بستگی دارد و مرجع TradingView باید یکسان باشد."
-                }
-            except Exception as exc:
-                errors.append("Twelve Data quote: " + str(exc)[:140])
-
-        if result is None:
-            # Keyless indicative spot quote fallback; this supplies a quote only,
-            # not historical OHLC candles required by the technical-analysis engine.
-            try:
-                metal_code = {"gold": "XAU", "silver": "XAG"}[market]
-                data = fetch_json("https://api.gold-api.com/price/" + metal_code, timeout=10)
-                price = float(data.get("price"))
-                if price <= 0 or data.get("currency", "USD") != "USD":
-                    raise RuntimeError("Gold API returned an invalid USD spot quote")
-                stamp_text = data.get("updatedAt") or data.get("updated_at")
-                stamp = None
-                if stamp_text:
-                    stamp = datetime.fromisoformat(str(stamp_text).replace("Z", "+00:00"))
-                    if stamp.tzinfo is None:
-                        stamp = stamp.replace(tzinfo=timezone.utc)
-                    stamp = stamp.astimezone(timezone.utc)
-                source_timestamp = stamp.isoformat() if stamp else None
-                result = {
-                    "available": True, "price": price, "source": "Gold API Spot",
-                    "source_symbol": metal_code + "/USD",
-                    "source_timestamp": source_timestamp,
-                    "age_seconds": max(0, int(now - stamp.timestamp())) if stamp else None,
-                    "is_proxy": False,
-                    "note": "قیمت مرجع اسپات به دلار برای هر اونس تروا از Gold API؛ داده حدود هر ۳۰ ثانیه به‌روزرسانی می‌شود و لزوماً با فید کارگزاری TradingView یکسان نیست."
-                }
-            except Exception as exc:
-                errors.append("Gold API spot: " + str(exc)[:120])
-
-        if result is None:
-            tickers = {"gold": ["XAUUSD=X"], "silver": ["XAGUSD=X"]}[market]
-            if ALLOW_METAL_FUTURES_PROXY:
-                tickers += {"gold": ["GC=F"], "silver": ["SI=F"]}[market]
-            for ticker in tickers:
-                try:
-                    params = urllib.parse.urlencode({"range": "1d", "interval": "1m", "events": "history"})
-                    url = "https://query1.finance.yahoo.com/v8/finance/chart/" + urllib.parse.quote(ticker, safe="=") + "?" + params
-                    data = fetch_json(url, headers={
-                        "Accept": "application/json",
-                        "User-Agent": "Mozilla/5.0 (compatible; SmartMoneyAI/2.2)"
-                    }, timeout=12)
-                    chart = data.get("chart", {})
-                    if chart.get("error"):
-                        raise RuntimeError(str(chart["error"]))
-                    meta = (chart.get("result") or [{}])[0].get("meta", {})
-                    price = meta.get("regularMarketPrice")
-                    stamp = meta.get("regularMarketTime")
-                    if price is None:
-                        raise RuntimeError("Yahoo returned no regularMarketPrice")
-                    stamp = int(stamp or now)
-                    is_proxy = ticker in ("GC=F", "SI=F")
-                    result = {
-                        "available": True, "price": float(price),
-                        "source": "Yahoo Finance " + ("Futures proxy" if is_proxy else "Spot proxy"),
-                        "source_symbol": ticker, "source_timestamp": datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat(),
-                        "age_seconds": max(0, int(now - stamp)), "is_proxy": is_proxy,
-                        "note": ("قرارداد آتی است و قیمت آن با اسپات ممکن است فرق کند." if is_proxy else "فید Yahoo ممکن است تأخیردار باشد و الزاماً با فید TradingView یکی نیست.")
-                    }
-                    break
-                except Exception as exc:
-                    errors.append(ticker + ": " + str(exc)[:120])
+        try:
+            params = urllib.parse.urlencode({"symbol": symbol})
+            data = fetch_json("https://fapi.binance.com/fapi/v1/ticker/24hr?" + params, timeout=8)
+            price = float(data["lastPrice"])
+            stamp_ms = int(data.get("closeTime") or int(now * 1000))
+            result = {
+                "available": True, "price": price,
+                "source": "Binance USD-M TradFi perpetual",
+                "source_symbol": symbol,
+                "source_timestamp": datetime.fromtimestamp(stamp_ms / 1000, tz=timezone.utc).isoformat(),
+                "age_seconds": max(0, int(now - stamp_ms / 1000)),
+                "is_proxy": True,
+                "instrument_type": "USDT-settled perpetual futures",
+                "note": "قیمت قرارداد دائمی TradFi بایننس؛ اسپات فیزیکی نیست و ممکن است با فید CAPITALCOM:XAUUSD/XAGUSD اختلاف داشته باشد."
+            }
+        except Exception as exc:
+            errors.append("Binance USD-M ticker: " + str(exc)[:140])
 
     if result is None:
         result = {
@@ -375,15 +349,15 @@ def get_candles(market, symbol, timeframe):
     tf = TIMEFRAMES[timeframe]
 
     if market == "crypto":
-        if symbol not in CRYPTO:
-            raise HTTPException(400, "نماد کریپتو در فهرست مجاز نیست")
+        if symbol not in get_binance_spot_symbols():
+            raise HTTPException(400, "نماد باید یک جفت فعال USDT در Binance Spot باشد")
         params = urllib.parse.urlencode({
             "symbol": symbol, "interval": tf["binance"], "limit": 250
         })
         try:
             raw = fetch_json("https://data-api.binance.vision/api/v3/klines?" + params)
         except Exception as exc:
-            raise HTTPException(502, "خطا از منبع داده کریپتو: " + str(exc))
+            raise HTTPException(502, "خطا از منبع کندل Binance Spot: " + str(exc))
         return [{
             "time": int(row[0]), "open": float(row[1]), "high": float(row[2]),
             "low": float(row[3]), "close": float(row[4]), "volume": float(row[5])
@@ -392,23 +366,23 @@ def get_candles(market, symbol, timeframe):
     if market in METALS:
         if symbol != METALS[market]:
             raise HTTPException(400, "نماد فلز نامعتبر است")
-
-        provider_errors = []
-        if TWELVE_DATA_API_KEY:
-            try:
-                return get_twelve_data_metals_candles(symbol, timeframe)
-            except Exception as exc:
-                provider_errors.append("Twelve Data: " + str(exc)[:130])
-
+        params = urllib.parse.urlencode({
+            "symbol": symbol, "interval": tf["binance"], "limit": 250
+        })
         try:
-            return get_yahoo_metals_candles(market, timeframe)
+            raw = fetch_json("https://fapi.binance.com/fapi/v1/klines?" + params, timeout=15)
+            if len(raw) < 60:
+                raise RuntimeError("Binance Futures returned fewer than 60 candles")
+            return [{
+                "time": int(row[0]), "open": float(row[1]), "high": float(row[2]),
+                "low": float(row[3]), "close": float(row[4]), "volume": float(row[5])
+            } for row in raw]
         except Exception as exc:
-            provider_errors.append("Yahoo Finance: " + str(exc)[:160])
             raise HTTPException(
                 502,
-                "دریافت کندل‌های OHLC برای تحلیل تکنیکال " + ("طلا" if market == "gold" else "نقره") +
-                " ناموفق بود. " + " | ".join(provider_errors) +
-                ". Gold API فقط قیمت لحظه‌ای اسپات را می‌دهد و کندل تاریخی OHLC این تایم‌فریم را تأمین نمی‌کند. برای تحلیل تکنیکال، TWELVE_DATA_API_KEY با دسترسی مناسب به " + symbol + " را در Render تنظیم کن؛ قرارداد آتی به‌صورت پیش‌فرض جایگزین اسپات نمی‌شود."
+                "دریافت کندل " + symbol + " از Binance USD-M Futures ناموفق بود: " +
+                str(exc)[:180] +
+                ". در صورت محدودیت منطقه‌ای یا در دسترس نبودن قرارداد، داده فلز نمایش داده نمی‌شود و منبع دیگری جایگزین نخواهد شد."
             )
 
     raise HTTPException(400, "فقط کریپتو، طلا و نقره پشتیبانی می‌شوند")
@@ -785,10 +759,10 @@ def status():
         "markets": ["crypto", "gold", "silver"],
         "forex_enabled": False,
         "providers": {
-            "crypto_prices": "Binance Spot live ticker + Binance closed OHLCV candles",
+            "crypto_prices": "Binance Spot live ticker + closed OHLCV candles for all active USDT pairs",
             "crypto_derivatives": "Binance public futures funding/OI/long-short + spot order-book snapshot",
-            "metals_prices": ("Twelve Data Quote + OHLCV; Gold API spot quote fallback; Yahoo spot fallback" if TWELVE_DATA_API_KEY else "Gold API spot quote fallback; Twelve Data key required for metal OHLCV analysis; Yahoo spot fallback"),
-            "metal_futures_proxy": "enabled" if ALLOW_METAL_FUTURES_PROXY else "disabled to avoid mixing futures with spot XAU/USD and XAG/USD",
+            "metals_prices": "Binance USD-M TradFi perpetual XAUUSDT and XAGUSDT live ticker + OHLCV candles",
+            "metal_instrument_note": "USDT-settled perpetual futures, not physical spot metal",
             "crypto_dominance": "CoinGecko global endpoint with source timestamp" + ("; API key configured" if COINGECKO_API_KEY else "; public endpoint"),
             "global_news": "GDELT DOC 2.0",
             "macro_indicators": "FRED " + ("configured" if FRED_API_KEY else "key_required"),
@@ -804,10 +778,14 @@ def status():
 
 @app.get("/api/options")
 def options():
+    symbols = get_binance_spot_symbols()
     return {
-        "crypto": CRYPTO,
+        "crypto": symbols,
+        "crypto_count": len(symbols),
+        "crypto_source": "Binance Spot — active USDT pairs",
         "gold": [METALS["gold"]],
         "silver": [METALS["silver"]],
+        "metal_source": "Binance USD-M TradFi perpetual",
         "timeframes": list(TIMEFRAMES.keys()),
         "forex": []
     }
@@ -903,8 +881,8 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
 
 @app.get("/api/quote")
 def api_quote(market: str = "crypto", symbol: str = "BTCUSDT"):
-    if market == "crypto" and symbol not in CRYPTO:
-        raise HTTPException(400, "نماد کریپتو در فهرست مجاز نیست")
+    if market == "crypto" and symbol not in get_binance_spot_symbols():
+        raise HTTPException(400, "نماد باید یک جفت فعال USDT در Binance Spot باشد")
     if market in METALS and symbol != METALS[market]:
         raise HTTPException(400, "نماد فلز نامعتبر است")
     if market not in ("crypto", "gold", "silver"):
@@ -1341,7 +1319,7 @@ def scanner(market: str = "all", timeframe: str = "15m", limit: int = 10):
     limit = max(1, min(limit, 20))
     tasks = []
     if market in ("all", "crypto"):
-        tasks.extend([("crypto", symbol) for symbol in CRYPTO[:limit]])
+        tasks.extend([("crypto", symbol) for symbol in get_binance_spot_symbols()[:limit]])
     if market in ("all", "gold"):
         tasks.append(("gold", METALS["gold"]))
     if market in ("all", "silver"):
