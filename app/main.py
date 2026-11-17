@@ -1338,7 +1338,7 @@ def get_crypto_derivatives(symbol):
     agg_rows = values.get("agg_trades") or []
     buy_quote = sell_quote = 0.0
     agg_count = 0
-    for trade in agg_rows if isinstance(agg_rows, list) else []:
+    for trade in (agg_rows if isinstance(agg_rows, list) else []):
         trade_price = safe_float(trade.get("p"))
         trade_qty = safe_float(trade.get("q"))
         if trade_price is None or trade_qty is None or trade_price <= 0 or trade_qty <= 0:
