@@ -23,7 +23,7 @@ function showA(d){
  let e=document.getElementById("signal");
  e.textContent=d.signal+" — جهت بازار: "+d.bias;
  e.className=d.signal==="BUY"?"buy":d.signal==="SELL"?"sell":"wait";
- const a=d.advanced_analysis||{},v=a.volatility||{},adx=a.adx||{},mom=a.momentum||{},vp=a.volume_profile||{},liq=a.liquidity_map||{},pd=a.premium_discount||{},macd=a.macd||{},der=d.derivatives||{};
+ const a=d.advanced_analysis||{},v=a.volatility||{},adx=a.adx||{},mom=a.momentum||{},vp=a.volume_profile||{},liq=a.liquidity_map||{},pd=a.premium_discount||{},macd=a.macd||{},der=d.derivatives||{},ob=d.order_block_approx||{};
  document.getElementById("metrics").innerHTML=
  metric("قیمت",fmt(d.price))+metric("حد ضرر",fmt(d.stop_loss))+metric("هدف ۱",fmt(d.take_profit_1))+metric("هدف ۲",fmt(d.take_profit_2))+
  metric("امتیاز کل",d.setup_score+"/100")+metric("امتیاز خرید",d.bull_score??"—")+metric("امتیاز فروش",d.bear_score??"—")+
@@ -36,6 +36,7 @@ function showA(d){
  let details=[];
  details.push("<h3>نقشه نقدینگی و ساختار پیشرفته</h3>");
  details.push('<div class="item">سقف‌های برابر: '+fmt(liq.equal_highs_pool)+' | کف‌های برابر: '+fmt(liq.equal_lows_pool)+' | سطح تعادل: '+fmt(pd.equilibrium)+'</div>');
+ details.push('<div class="item">Order Block: '+(ob.type||"تأیید نشد")+' | محدوده: '+(ob.low==null?"—":fmt(ob.low)+" تا "+fmt(ob.high))+' | وضعیت: '+(ob.mitigated==null?"—":ob.mitigated?"برگشت/مصرف شده":"هنوز تست نشده")+'</div>');
  details.push('<div class="item">Volume Profile — POC: '+(vp.available?fmt(vp.poc):"ناموجود")+' | VAL: '+(vp.available?fmt(vp.value_area_low):"ناموجود")+' | VAH: '+(vp.available?fmt(vp.value_area_high):"ناموجود")+'</div>');
  const fib=a.fibonacci||{};
  details.push('<div class="item">فیبوناچی '+(fib.available?fib.leg:"")+' — 38.2%: '+(fib.available?fmt(fib["0.382"]):"—")+' | 50%: '+(fib.available?fmt(fib["0.5"]):"—")+' | 61.8%: '+(fib.available?fmt(fib["0.618"]):"—")+'</div>');
