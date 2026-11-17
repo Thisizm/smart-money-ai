@@ -440,14 +440,14 @@ function drawOpportunityAssetChart(d){
 }
 
 function opCard(x){
- const stateColor=x.state==="CONFIRMED_SETUP"?"#28c997":x.state==="WAITING_FOR_TRIGGER"?"#f0bd55":"#93a4bd";
+ const stateColor=x.state==="CONFIRMED_SETUP"?"#28c997":(x.state==="WAITING_FOR_TRIGGER"||x.state==="DEVELOPING"||x.state==="WATCHLIST")?"#f0bd55":"#93a4bd";
  const side=x.side==="long"?"خرید":x.side==="short"?"فروش":"نامشخص";
  const z=x.levels?.entry_zone,targets=x.levels?.targets||[];
  const plan=x.entry_plan||{};
  const why=(x.wait_reason||[]).slice(0,3).join("؛ ");
  return '<div class="item" style="border-right:3px solid '+stateColor+'">'+
  '<div class="row" style="justify-content:space-between"><b>'+opEscape(x.symbol)+'</b><b style="color:'+stateColor+'">'+opEscape(x.state_label)+'</b></div>'+
- '<div class="small">جهت روزانه: '+opEscape(x.daily_signal)+' | تأیید ۴ساعته: '+opEscape(x.four_hour_signal)+' | کیفیت ستاپ: '+opNum(x.quality_score)+'/100 (احتمال برد نیست)</div>'+
+ '<div class="small">جهت روزانه: '+opEscape(x.daily_signal)+' ('+opEscape(x.daily_bias||"—")+') | ۴ساعته: '+opEscape(x.four_hour_signal)+' ('+opEscape(x.four_hour_bias||"—")+') | کیفیت ستاپ: '+opNum(x.quality_score)+'/100 (احتمال برد نیست)</div>'+
  '<div>قیمت زنده: <b>'+opNum(x.price)+'</b> | قیمت کندل تحلیل: '+opNum(x.analysis_price)+'</div>'+
  '<div class="small">ورود: '+(z?opNum(z.low)+' تا '+opNum(z.high):"ناحیه معتبر پیدا نشد")+
  ' | حد ضرر: '+opNum(plan.stop_loss)+' | ابطال: '+opNum(x.levels?.invalidation)+'</div>'+
