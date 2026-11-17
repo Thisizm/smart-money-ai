@@ -115,6 +115,35 @@ class PaperTradingTests(unittest.TestCase):
         self.assertEqual(data["stats"]["net_r"], 0)
 
 
+    def test_active_and_closed_trades_are_separated(self):
+        paper_trading.record_signal(self.sample_signal())
+        active_data = paper_trading.list_paper_trades()
+        self.assertEqual(len(active_data["active_trades"]), 1)
+        self.assertEqual(len(active_data["history_trades"]), 0)
+        paper_trading.close_paper_trade(1)
+        closed_data = paper_trading.list_paper_trades()
+        self.assertEqual(len(closed_data["active_trades"]), 0)
+        self.assertEqual(len(closed_data["history_trades"]), 1)
+        self.assertEqual(closed_data["history_trades"][0]["status"], "MANUAL_CLOSED")
+
+    def test_all_active_trades_are_returned_even_when_history_limit_is_small(self):
+        signal = self.sample_signal()
+        paper_trading.record_signal(signal)
+        signal2 = self.sample_signal()
+        signal2["symbol"] = "ETHUSDT"
+        signal2["last_candle_time"] += 900000
+        paper_trading.record_signal(signal2)
+        data = paper_trading.list_paper_trades(limit=1)
+        self.assertEqual(len(data["active_trades"]), 2)
+        self.assertEqual(data["stats"]["pending_entry"], 2)
+
+    def test_trade_remains_after_database_reinitialization(self):
+        paper_trading.record_signal(self.sample_signal())
+        paper_trading.init_paper_db()
+        data = paper_trading.list_paper_trades()
+        self.assertEqual(len(data["active_trades"]), 1)
+        self.assertEqual(data["active_trades"][0]["symbol"], "BTCUSDT")
+
     def test_stop_loss_closes_trade_as_loss(self):
         paper_trading.record_signal(self.sample_signal())
         paper_trading.monitor_open_trades(
