@@ -67,7 +67,48 @@ function fmt(v){
  const decimals=market&&market.value!=="crypto"?2:(Math.abs(v)>=1000?0:Math.abs(v)>=1?2:Math.abs(v)>=0.01?4:6);
  return v.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:decimals});
 }
-async function get(url,opt){let r=await fetch(url,opt),d=await r.json();if(!r.ok)throw Error(d.detail||"خطا");return d}
+async function get(url,opt){
+ const maxAttempts=3;
+ let lastError=null;
+ for(let attempt=1;attempt<=maxAttempts;attempt++){
+  try{
+   const response=await fetch(url,opt);
+   const contentType=(response.headers.get("content-type")||"").toLowerCase();
+   const raw=await response.text();
+   let data;
+   try{
+    data=JSON.parse(raw);
+   }catch(parseError){
+    const looksHtml=/^\\s*<(?:!doctype|html|head|body)\\b/i.test(raw);
+    const transient=response.status===429||response.status===502||response.status===503||response.status===504||response.status===0;
+    if(attempt<maxAttempts&&(looksHtml||!contentType.includes("json")||transient)){
+     await new Promise(resolve=>setTimeout(resolve,attempt*700));
+     continue;
+    }
+    const reason=looksHtml?"سرور به‌جای داده کندل، صفحه موقت HTML برگرداند.":"پاسخ سرور JSON معتبر نبود.";
+    throw new Error(reason+" (HTTP "+response.status+"). دوباره تحلیل را اجرا کن.");
+   }
+   if(!response.ok){
+    const detail=data&&typeof data==="object"?(data.detail||data.message):null;
+    const transient=response.status===429||response.status===502||response.status===503||response.status===504;
+    if(transient&&attempt<maxAttempts){
+     await new Promise(resolve=>setTimeout(resolve,attempt*700));
+     continue;
+    }
+    throw new Error(detail||("خطای سرور (HTTP "+response.status+")"));
+   }
+   return data;
+  }catch(error){
+   lastError=error;
+   if(attempt<maxAttempts&&(/Failed to fetch|NetworkError|Load failed/i.test(String(error.message||error)))){
+    await new Promise(resolve=>setTimeout(resolve,attempt*700));
+    continue;
+   }
+   throw error;
+  }
+ }
+ throw lastError||new Error("دریافت داده ناموفق بود");
+}
 async function loadOptions(){try{let d=await get("/api/options");if(Array.isArray(d.crypto)&&d.crypto.length){let current=document.getElementById("symbol").value;coins=d.crypto;symbols();if(coins.includes(current))document.getElementById("symbol").value=current;filterSymbols()}}catch(e){document.getElementById("coin-count").textContent="فهرست موقت Binance بارگذاری نشد؛ نمادهای پیش‌فرض نمایش داده شده‌اند."}}
 function metric(k,v){return '<div class="metric"><span class="muted">'+k+'</span><br><b>'+v+'</b></div>'}
 function renderLiveQuote(q){
