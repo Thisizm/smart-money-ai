@@ -43,6 +43,8 @@ class AdvancedAnalysisTests(unittest.TestCase):
         self.assertIn("in_sample", result)
         self.assertIn("out_of_sample", result)
         self.assertIn("out_of_sample_2x_cost_stress", result)
+        self.assertIn("walk_forward", result)
+        self.assertIn("monte_carlo", result)
         self.assertEqual(result["split"]["out_of_sample_percent"], 30)
 
     def test_integrated_analysis_has_risk_gate(self):
