@@ -91,16 +91,17 @@ function renderChart(d){
   legend.push('<span class="legend-chip"><span class="legend-dot" style="background:'+color+'"></span>'+title+' '+fmt(n)+'</span>');
   return item;
  };
+ const dashed=LightweightCharts.LineStyle.Dashed;
  const q=d.live_quote||{};
  if(q.available&&(!d.chart_source_symbol||q.source_symbol===d.chart_source_symbol))livePriceLine=line(q.price,"#7dd3fc","قیمت زنده",LightweightCharts.LineStyle.Solid,1,true);
 
  if(d.signal==="BUY"||d.signal==="SELL"){
   line(levels.entry,"#28c997","ورود",LightweightCharts.LineStyle.Solid,2,true);
   line(levels.stop_loss,"#ff7182","حد ضرر",LightweightCharts.LineStyle.Solid,2,true);
-  (levels.targets||[]).forEach((value,index)=>line(value,"#28c997","هدف "+(index+1),dotted,1,index===0));
+  (levels.targets||[]).forEach((value,index)=>line(value,"#7aa7ff","هدف "+(index+1),LightweightCharts.LineStyle.Solid,1,index===0));
  }else{
-  line(sc.bullish&&sc.bullish.trigger,"#28c997","شکست صعودی",dashed,2,true);
-  line(sc.bearish&&sc.bearish.trigger,"#ff7182","شکست نزولی",dashed,2,true);
+  line(sc.bullish&&sc.bullish.trigger,"#28c997","شرط خرید",dashed,2,true);
+  line(sc.bearish&&sc.bearish.trigger,"#ff7182","شرط فروش",dashed,2,true);
  }
  document.getElementById("chart-levels-legend").innerHTML=legend.join("")||'<span class="small">سطح قابل نمایش فعالی وجود ندارد.</span>';
  const rsiData=Array.isArray(d.rsi_chart)?d.rsi_chart.filter(x=>x&&Number.isFinite(Number(x.value))):[];
