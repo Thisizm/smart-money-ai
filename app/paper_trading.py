@@ -314,7 +314,7 @@ def list_paper_trades(limit=100):
         stats = con.execute("""
             SELECT COUNT(*) AS total,
                    SUM(CASE WHEN status IN ('ACTIVE','TP1_HIT') THEN 1 ELSE 0 END) AS active,
-                   SUM(CASE WHEN status IN ('TP1_HIT','TP2_HIT','SL_HIT','SL_AFTER_TP1','MANUAL_CLOSED') THEN 1 ELSE 0 END) AS tp1_touched,
+                   SUM(CASE WHEN status IN ('TP1_HIT','TP2_HIT','SL_HIT','SL_AFTER_TP1') THEN 1 ELSE 0 END) AS tp1_touched,
                    SUM(CASE WHEN status='TP2_HIT' THEN 1 ELSE 0 END) AS tp2,
                    SUM(CASE WHEN status IN ('SL_HIT','SL_AFTER_TP1') THEN 1 ELSE 0 END) AS stopped,
                    SUM(CASE WHEN status IN ('TP2_HIT','SL_HIT','SL_AFTER_TP1','MANUAL_CLOSED') THEN 1 ELSE 0 END) AS closed
@@ -323,6 +323,7 @@ def list_paper_trades(limit=100):
         closed_rows = con.execute("""
             SELECT realized_r FROM paper_trades
             WHERE status IN ('TP2_HIT','SL_HIT','SL_AFTER_TP1','MANUAL_CLOSED')
+              AND COALESCE(exit_reason, '') != 'MANUAL_CANCEL_BEFORE_ENTRY'
         """).fetchall()
     for row in rows:
         entry = float(row.get("entry_price") or 0)
