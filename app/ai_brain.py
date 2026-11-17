@@ -5,6 +5,7 @@ responsible for rejecting malformed or unsafe trade plans.
 """
 import json
 import os
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -70,8 +71,8 @@ def _gemini_request(model, api_key, body):
         return json.loads(response.read().decode("utf-8"))
 
 
-def _request_with_retry(model, api_key, body, attempts=3):
-    """Retry temporary Gemini capacity/server failures without changing evidence."""
+def _request_with_retry(model, api_key, body, attempts=2):
+    """Retry temporary Gemini capacity/server failures and read timeouts."""
     for attempt in range(attempts):
         try:
             return _gemini_request(model, api_key, body)
@@ -84,6 +85,22 @@ def _request_with_retry(model, api_key, body, attempts=3):
             except (TypeError, ValueError):
                 delay = min(6.0, 1.5 * (2 ** attempt))
             time.sleep(delay)
+        except (socket.timeout, TimeoutError) as exc:
+            if attempt >= attempts - 1:
+                raise RuntimeError(
+                    "زمان انتظار پاسخ Gemini تمام شد؛ ارتباط یا سرور مدل موقتاً کند است. "
+                    "این خطا به‌تنهایی نشانه تمام‌شدن سهمیه رایگان نیست. کمی بعد دوباره تلاش کن."
+                ) from exc
+            time.sleep(1.5)
+        except urllib.error.URLError as exc:
+            if not isinstance(getattr(exc, "reason", None), (socket.timeout, TimeoutError)):
+                raise
+            if attempt >= attempts - 1:
+                raise RuntimeError(
+                    "زمان انتظار پاسخ Gemini تمام شد؛ ارتباط یا سرور مدل موقتاً کند است. "
+                    "این خطا به‌تنهایی نشانه تمام‌شدن سهمیه رایگان نیست. کمی بعد دوباره تلاش کن."
+                ) from exc
+            time.sleep(1.5)
 
 
 def call_gemini(evidence):
