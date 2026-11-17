@@ -46,10 +46,8 @@ function renderLiveQuote(q){
  const el=document.getElementById("livequote");
  if(!q||!q.available){el.textContent="قیمت زنده در دسترس نیست؛ از قیمت کندل بسته‌شده به‌عنوان قیمت لحظه‌ای استفاده نکن.";return}
  el.textContent="قیمت زنده: "+fmt(q.price)+" | منبع: "+(q.source||"نامشخص")+" | نماد منبع: "+(q.source_symbol||"—")+" | زمان آخرین داده منبع: "+(q.source_timestamp||"نامشخص")+" | سن داده: "+(q.age_seconds==null?"نامشخص":q.age_seconds+" ثانیه")+" | "+(q.note||"")+(q.is_proxy?" | هشدار: قرارداد آتی/Proxy":"");
- const cells=document.querySelectorAll("#metrics .metric b");
- if(cells[0])cells[0].textContent=fmt(q.price);
- if(cells[2])cells[2].textContent=q.age_seconds==null?"نامشخص":fmt(q.age_seconds)+" ثانیه";
- if(cells[3])cells[3].textContent=q.source||"ناموجود";
+ const livePriceCell=document.querySelector("#metrics .metric:first-child b");
+ if(livePriceCell)livePriceCell.textContent=fmt(q.price);
 }
 function renderDivergences(d){
  const el=document.getElementById("divergence-panel");if(!el)return;
