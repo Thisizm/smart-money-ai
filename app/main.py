@@ -406,9 +406,9 @@ def get_candles(market, symbol, timeframe):
             provider_errors.append("Yahoo Finance: " + str(exc)[:160])
             raise HTTPException(
                 502,
-                "دریافت قیمت " + ("طلا" if market == "gold" else "نقره") +
-                " از منابع عمومی ناموفق بود. " + " | ".join(provider_errors) +
-                ". برای قیمت اسپات دقیق، TWELVE_DATA_API_KEY با دسترسی مناسب را در Render تنظیم کن؛ قرارداد آتی به‌صورت پیش‌فرض جایگزین اسپات نمی‌شود."
+                "دریافت کندل‌های OHLC برای تحلیل تکنیکال " + ("طلا" if market == "gold" else "نقره") +
+                " ناموفق بود. " + " | ".join(provider_errors) +
+                ". Gold API فقط قیمت لحظه‌ای اسپات را می‌دهد و کندل تاریخی OHLC این تایم‌فریم را تأمین نمی‌کند. برای تحلیل تکنیکال، TWELVE_DATA_API_KEY با دسترسی مناسب به " + symbol + " را در Render تنظیم کن؛ قرارداد آتی به‌صورت پیش‌فرض جایگزین اسپات نمی‌شود."
             )
 
     raise HTTPException(400, "فقط کریپتو، طلا و نقره پشتیبانی می‌شوند")
