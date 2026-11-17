@@ -21,7 +21,25 @@ from .paper_trading import init_paper_db, record_signal, monitor_open_trades, li
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(APP_DIR)
-DB_PATH = os.getenv("DATABASE_PATH", os.path.join(ROOT_DIR, "alerts.db"))
+def _database_path():
+    configured = os.getenv("DATABASE_PATH")
+    if configured:
+        return configured
+    persistent_dir = os.getenv("PERSISTENT_DATA_DIR", "/var/data")
+    if os.path.isdir(persistent_dir) and os.access(persistent_dir, os.W_OK):
+        persistent_path = os.path.join(persistent_dir, "alerts.db")
+        legacy_path = os.path.join(ROOT_DIR, "alerts.db")
+        if not os.path.exists(persistent_path) and os.path.exists(legacy_path):
+            try:
+                import shutil
+                shutil.copy2(legacy_path, persistent_path)
+            except OSError:
+                pass
+        return persistent_path
+    return os.path.join(ROOT_DIR, "alerts.db")
+
+
+DB_PATH = _database_path()
 
 TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
 ALLOW_METAL_FUTURES_PROXY = os.getenv("ALLOW_METAL_FUTURES_PROXY", "false").lower() in ("1", "true", "yes")
@@ -456,7 +474,7 @@ def get_candles(market, symbol, timeframe):
             raise HTTPException(400, "نماد باید یک جفت فعال USDT در Binance Spot باشد")
         # Binance limits each request to 1000 bars. Page backwards from the
         # newest bar so the analysis/backtest receives a longer contiguous history.
-        target = max(250, min(int(os.getenv("HISTORICAL_CANDLE_LIMIT", "1500")), 3000))
+        target = max(250, min(int(os.getenv("HISTORICAL_CANDLE_LIMIT", "2000")), 3000))
         rows, end_time = [], None
         try:
             while len(rows) < target:
@@ -1395,7 +1413,8 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
         result["external_confirmation"] = get_marginpad_screener_confirmation(symbol)
     else:
         result["external_confirmation"] = {"available": False, "source": "MarginPad", "note": "اسکنر مشتقات MarginPad فقط برای کریپتو است."}
-    chart_bars = completed_candles(candles, timeframe)[-220:]
+    chart_limit = max(300, min(int(os.getenv("CHART_CANDLE_LIMIT", "1500")), 3000))
+    chart_bars = completed_candles(candles, timeframe)[-chart_limit:]
     result["chart_candles"] = [{
         "time": int(c["time"] // 1000),
         "open": c["open"], "high": c["high"],
