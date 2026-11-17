@@ -249,7 +249,7 @@ def opportunity_asset(symbol: str, market: str = "crypto"):
 
     tf_results, tf_errors = {}, {}
     candles_by_tf = {}
-    for tf in ("1w", "1d", "4h", "1h"):
+    for tf in ("1w", "1d", "4h", "1h", "15m"):
         try:
             raw = core.get_candles(market, symbol, tf)
             closed = core.completed_candles(raw, tf)
@@ -300,9 +300,10 @@ def opportunity_asset(symbol: str, market: str = "crypto"):
     weekly_side = side_of(tf_results["1w"]) if "1w" in tf_results else "unavailable"
     four_side = side_of(tf_results["4h"]) if "4h" in tf_results else "unavailable"
     one_hour_side = side_of(tf_results["1h"]) if "1h" in tf_results else "unavailable"
+    fifteen_side = side_of(tf_results["15m"]) if "15m" in tf_results else "unavailable"
     daily_side = side_of(daily)
-    alignments = {"1W": weekly_side, "1D": daily_side, "4H": four_side, "1H": one_hour_side}
-    matching = sum(1 for value in (weekly_side, four_side, one_hour_side) if value == daily_side and daily_side != "neutral")
+    alignments = {"1W": weekly_side, "1D": daily_side, "4H": four_side, "1H": one_hour_side, "15M": fifteen_side}
+    matching = sum(1 for value in (weekly_side, four_side, one_hour_side, fifteen_side) if value == daily_side and daily_side != "neutral")
     plan_long = smart.get("long") or {}
     plan_short = smart.get("short") or {}
     long_zone = plan_long.get("zone") if plan_long.get("available") else None
