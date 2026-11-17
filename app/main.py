@@ -1923,8 +1923,8 @@ def scanner(market: str = "all", timeframe: str = "15m", limit: int = 10):
 
 @app.post("/api/ai-synthesis")
 async def ai_synthesis(request: Request):
-    if not AI_API_KEY:
-        raise HTTPException(503, "برای تحلیل هوش مصنوعی، AI_API_KEY را در Render تنظیم کن. این کلید هزینه جداگانه API دارد.")
+    if not AI_API_KEY and not GEMINI_API_KEY:
+        raise HTTPException(503, "برای هوش مصنوعی مولد رایگان، GEMINI_API_KEY را در Render ثبت کن؛ بدون کلید فقط تحلیل الگوریتمی فعال است.")
     try:
         payload = await request.json()
     except Exception:
@@ -1954,31 +1954,44 @@ async def ai_synthesis(request: Request):
         "بین داده زنده، داده با تأخیر، تقریب محاسباتی و داده ناموجود تفاوت بگذار. سود قطعی وعده نده. "
         "ساختار چندتایم‌فریمی را با وزن بیشتر به 4h/1d/1w بررسی کن؛ تعارض تایم‌فریم‌ها را پنهان نکن. "
         "ساختار بازار، BOS/CHOCH، sweep، FVG، نواحی Order Block معتبر، حجم، VWAP، Volume Profile، ADX/ATR، RSI/MACD، "
-        "مشتقات کریپتو، نقشه لیکوییدیشن CoinGlass در صورت موجود بودن، دفتر سفارش snapshot، COT هفتگی، داده‌های اقتصاد کلان و همبستگی‌ها را جداگانه ارزیابی کن. "
+        "مشتقات کریپتو، تأیید مستقل MarginPad در صورت موجود بودن، ریسک تقویم اقتصادی، دفتر سفارش snapshot، COT هفتگی، داده‌های اقتصاد کلان و همبستگی‌ها را جداگانه ارزیابی کن. "
         "COT هفتگی و داده‌های کلان با تأخیرند؛ دفتر سفارش فقط snapshot است؛ Volume Profile و SMC تقریبی‌اند. "
         "ورودی، حدضرر، اهداف، R/R و شرط ابطال را فقط وقتی داده کافی است ارائه کن؛ در غیر این صورت WAIT. "
         "خروجی فارسی و ساختاریافته باشد: خلاصه، عوامل صعودی، عوامل نزولی، تعارض‌ها، رژیم بازار، سناریوی اصلی، "
         "سناریوی جایگزین، شرط ابطال، ریسک‌های رویدادی، کیفیت داده و دلایل عدم معامله. "
         "امتیازها احتمال موفقیت یا نرخ برد نیستند و هیچ احتمال عددی نساز. داده ورودی: " + context
     )
-    body = json.dumps({"model": AI_MODEL, "input": prompt, "max_output_tokens": 1100}).encode("utf-8")
-    req = urllib.request.Request(
-        "https://api.openai.com/v1/responses", data=body,
-        headers={"Authorization": "Bearer " + AI_API_KEY, "Content-Type": "application/json"},
-        method="POST"
-    )
     try:
+        if AI_API_KEY:
+            openai_model = AI_MODEL if not AI_MODEL.startswith("gemini-") else os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+            body = json.dumps({"model": openai_model, "input": prompt, "max_output_tokens": 1100}).encode("utf-8")
+            req = urllib.request.Request("https://api.openai.com/v1/responses", data=body,
+                headers={"Authorization": "Bearer " + AI_API_KEY, "Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=45) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            chunks = []
+            for item in data.get("output", []):
+                if item.get("type") == "message":
+                    for part in item.get("content", []):
+                        if part.get("type") == "output_text":
+                            chunks.append(part.get("text", ""))
+            return {"analysis": "\n".join(chunks), "model": data.get("model", openai_model), "provider": "OpenAI", "updated_at": utc_now()}
+        model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        gemini_body = json.dumps({"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1100}}).encode("utf-8")
+        gemini_url = "https://generativelanguage.googleapis.com/v1beta/models/" + urllib.parse.quote(model, safe="") + ":generateContent?key=" + urllib.parse.quote(GEMINI_API_KEY, safe="")
+        req = urllib.request.Request(gemini_url, data=gemini_body, headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=45) as response:
             data = json.loads(response.read().decode("utf-8"))
         chunks = []
-        for item in data.get("output", []):
-            if item.get("type") == "message":
-                for part in item.get("content", []):
-                    if part.get("type") == "output_text":
-                        chunks.append(part.get("text", ""))
-        return {"analysis": "\n".join(chunks), "model": data.get("model", AI_MODEL), "updated_at": utc_now()}
+        for candidate in data.get("candidates", []):
+            for part in (candidate.get("content") or {}).get("parts", []):
+                if part.get("text"):
+                    chunks.append(part["text"])
+        if not chunks:
+            raise RuntimeError("Gemini پاسخ متنی برنگرداند")
+        return {"analysis": "\n".join(chunks), "model": model, "provider": "Google Gemini", "updated_at": utc_now(), "free_tier_note": "سهمیه رایگان و محدودیت‌های Google AI Studio اعمال می‌شود."}
     except Exception as exc:
-        raise HTTPException(502, "درخواست AI انجام نشد؛ کلید، دسترسی مدل و اعتبار API را بررسی کن. " + str(exc)[:120])
+        raise HTTPException(502, "درخواست هوش مصنوعی انجام نشد؛ کلید یا سهمیه سرویس را بررسی کن. " + str(exc)[:150])
 
 
 @app.post("/webhook")
