@@ -911,8 +911,9 @@ def multi_timeframe(market: str = "crypto", symbol: str = "BTCUSDT"):
     return {
         "market": market, "symbol": symbol, "overall": overall,
         "weighted_score": weighted_score, "alignment_percent": alignment,
+        "live_quote": get_live_quote(market, symbol),
         "timeframes": results, "updated_at": utc_now(),
-        "note": "تایم‌فریم‌های بالاتر وزن بیشتری دارند؛ امتیاز وزنی احتمال موفقیت نیست."
+        "note": "قیمت زنده جدا از قیمت کندل بسته‌شده است؛ تایم‌فریم‌های بالاتر وزن بیشتری دارند و امتیاز وزنی احتمال موفقیت نیست."
     }
 
 
