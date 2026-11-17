@@ -773,6 +773,23 @@ def analyze(candles, market, symbol, timeframe):
                 }
                 break
 
+    order_block_adjustment = 0
+    if order_block and atr > 0:
+        zone_low = float(order_block["low"])
+        zone_high = float(order_block["high"])
+        distance = max(0.0, zone_low - price, price - zone_high)
+        distance_atr = distance / atr
+        order_block["distance_atr"] = round(distance_atr, 3)
+        order_block["relevant"] = bool(not order_block.get("mitigated") and distance_atr <= 2.0)
+        if order_block["relevant"] and direction == "BUY" and "صعودی" in order_block.get("type", ""):
+            bull = min(100, bull + 2)
+            order_block_adjustment = 2
+        elif order_block["relevant"] and direction == "SELL" and "نزولی" in order_block.get("type", ""):
+            bear = min(100, bear + 2)
+            order_block_adjustment = 2
+        setup_score = min(100, max(bull, bear))
+        order_block["score_adjustment"] = order_block_adjustment
+
     notes = [
         "EMA 9/21: " + ("صعودی" if e9 > e21 else "نزولی"),
         "EMA 21/50: " + ("صعودی" if e21 > e50 else "نزولی"),
@@ -788,6 +805,7 @@ def analyze(candles, market, symbol, timeframe):
         "تغییر کاراکتر (CHOCH): " + choch,
         "لیکوییدیتی: " + ("سوییپ نقدینگی زیر کف در ۱۰ کندل اخیر" if sweep_low else "سوییپ نقدینگی بالای سقف در ۱۰ کندل اخیر" if sweep_high else "سوییپ تأییدشده‌ای در ۱۰ کندل اخیر پیدا نشد"),
         "FVG: " + ("ناحیه صعودی باز در کندل‌های اخیر" if bullish_fvg else "ناحیه نزولی باز در کندل‌های اخیر" if bearish_fvg else "FVG باز و معناداری پیدا نشد"),
+        "Order Block: " + ("ناحیه فعال و نزدیک قیمت؛ تأیید کم‌وزن +۲ امتیاز" if order_block_adjustment else "ناحیه معتبرِ نزدیک قیمت برای تأیید سیگنال پیدا نشد"),
         "حجم: " + ("بالاتر از میانگین ۲۰ کندل" if volume_confirm else "تأیید حجمی ندارد"),
         "امتیاز خریدار/فروشنده: " + str(bull) + "/" + str(bear)
     ]
