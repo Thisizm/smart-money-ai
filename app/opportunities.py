@@ -59,7 +59,7 @@ def _serialize_candidate(market, symbol, daily_candles, daily, four_hour, quote,
     # strategy/risk gates pass, the quote is fresh, and the planned zone is live.
     confirmed = bool(side and aligned and strategy_ok and risk_ok and execution_ok
                      and plan.get("available") and inside_zone and not_invalidated
-                     and plan.get("risk_gate_passed"))
+                     and plan.get("reaction_confirmed") and plan.get("risk_gate_passed"))
     watch = bool(side and strategy_ok and risk_ok and aligned and not_invalidated)
     if confirmed:
         state = "CONFIRMED_SETUP"
@@ -72,9 +72,6 @@ def _serialize_candidate(market, symbol, daily_candles, daily, four_hour, quote,
         label = "فعلاً بدون ورود معتبر"
 
     structural_targets = _levels(daily_candles, side, float(daily.get("price") or 0)) if side else []
-    if not structural_targets and side and isinstance(plan.get("targets"), list):
-        # Preserve only the engine's explicitly labelled projected targets.
-        structural_targets = list(plan["targets"][:3])
     checks = (daily.get("strategy_plan") or {}).get("checks") or []
     quality = 0
     quality += 25 if strategy_ok else 0
@@ -117,7 +114,7 @@ def _serialize_candidate(market, symbol, daily_candles, daily, four_hour, quote,
         "event_risk": event_risk, "candle_source": daily_candles[-1].get("source"),
         "last_candle_time": daily.get("last_candle_time"),
         "reasons": daily.get("analysis") or [], "wait_reason": daily.get("wait_reason") or [],
-        "targets_note": "هدف‌ها از سوئینگ‌های تأییدشده گرفته می‌شوند؛ اگر سطح ساختاری کافی نباشد، هدف ساختگی نمایش داده نمی‌شود.",
+        "targets_note": "هدف‌ها فقط از سوئینگ‌های تأییدشده مخالف گرفته می‌شوند؛ اگر سطح کافی نباشد، هدف ساختگی نمایش داده نمی‌شود.",
         "updated_at": daily.get("updated_at")
     }
 
