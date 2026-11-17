@@ -1163,7 +1163,7 @@ def analyze(candles, market, symbol, timeframe):
         "direction_rule": "هم‌جهت با سیگنال اصلی؛ وقتی سیگنال اصلی WAIT است ورود هوشمند جهت مستقل و قابل معامله صادر نمی‌کند.",
         "note": "جهت ترجیحی از سیگنال نهایی و سوگیری تحلیل گرفته شده است؛ فیلتر ریسک مسدود یعنی ورود مجاز نیست. ناحیه‌ها تخمینی‌اند و امتیازها احتمال آماری موفقیت نیستند."
     }
-    return {
+    result = {
         "market": market, "symbol": symbol, "timeframe": timeframe,
         "signal": direction, "bias": bias,
         "setup_score": setup_score, "bull_score": bull, "bear_score": bear,
@@ -1208,6 +1208,10 @@ def analyze(candles, market, symbol, timeframe):
         },
         "updated_at": utc_now()
     }
+    base_assessment = assess_hidden_intelligence(market, result)
+    apply_intelligence_gate(result, base_assessment)
+    return result
+
 @app.get("/", response_class=HTMLResponse)
 def home():
     path = os.path.join(ROOT_DIR, "static", "index.html")
