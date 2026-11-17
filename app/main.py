@@ -1287,7 +1287,14 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
                             (side == "short" and live_value >= stop_value)))
         in_zone = bool(live_value is not None
                        and float(zone.get("low", 0)) <= live_value <= float(zone.get("high", 0)))
-        plan["live_quote_confirmed"] = in_zone
+        trigger_entry = float(plan.get("entry")) if plan.get("entry") is not None else None
+        trigger_tolerance = max(float(result.get("atr") or 0) * 0.35, abs(trigger_entry or 0) * 0.0005)
+        near_trigger = bool(live_value is not None and trigger_entry is not None
+                             and abs(live_value - trigger_entry) <= trigger_tolerance)
+        live_trigger_valid = bool(quote_fresh and (in_zone or (
+            plan.get("reaction_confirmed") and near_trigger
+        )))
+        plan["live_quote_confirmed"] = live_trigger_valid
         plan["live_quote_source"] = quote.get("source") if quote_fresh else None
         plan["live_price_at_check"] = live_value
         if invalidated:
@@ -1295,9 +1302,9 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             plan["setup_state"] = "INVALIDATED"
             plan["live_quote_confirmed"] = False
             plan["note"] = "سناریو با عبور قیمت زنده از حد ابطال ساختاری باطل شد؛ ورود و اهداف قبلی دیگر معتبر نیستند."
-        elif plan.get("status") == "CONFIRMED_ON_CLOSED_CANDLE" and not in_zone:
+        elif plan.get("status") == "CONFIRMED_ON_CLOSED_CANDLE" and not live_trigger_valid:
             plan["status"] = "WAIT_FOR_LIVE_PRICE_CONFIRMATION"
-        elif plan.get("status") == "WAIT_FOR_PULLBACK_CONFIRMATION" and plan.get("reaction_confirmed") and in_zone and plan.get("risk_gate_passed"):
+        elif plan.get("status") == "WAIT_FOR_PULLBACK_CONFIRMATION" and plan.get("reaction_confirmed") and live_trigger_valid and plan.get("risk_gate_passed"):
             plan["status"] = "CONFIRMED_ON_CLOSED_CANDLE"
         plan["note"] = (plan.get("note", "") + " قیمت زنده باید تازه و در محدوده مجاز باشد؛ در غیر این صورت ورود تأیید نمی‌شود.").strip()
     preferred_plan = smart.get(smart.get("preferred_side", ""))
