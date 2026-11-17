@@ -3,6 +3,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import APIRouter, HTTPException
+from .intelligence_engine import assess_hidden_intelligence, apply_intelligence_gate
 
 router = APIRouter()
 _CACHE = {"at": 0.0, "key": None, "data": None}
@@ -128,7 +129,7 @@ def _serialize_candidate(market, symbol, daily_candles, daily, four_hour, quote,
             "color": "#28c997" if side == "long" else "#ff7182",
             "shape": "arrowUp" if side == "long" else "arrowDown",
             "text": "BUY" if side == "long" else "SELL"}] if side else []),
-        "event_risk": event_risk, "candle_source": daily_candles[-1].get("source"),
+        "event_risk": event_risk, "hidden_intelligence": daily.get("hidden_intelligence"), "candle_source": daily_candles[-1].get("source"),
         "last_candle_time": daily.get("last_candle_time"),
         "reasons": daily.get("analysis") or [], "wait_reason": daily.get("wait_reason") or [],
         "targets_note": "هدف‌ها فقط از سوئینگ‌های تأییدشده مخالف گرفته می‌شوند؛ اگر سطح کافی نباشد، هدف ساختگی نمایش داده نمی‌شود.",
@@ -286,6 +287,11 @@ def opportunity_asset(symbol: str, market: str = "crypto", timeframe: str = "1d"
             dominance_data = core.dominance()
         except Exception as exc:
             dominance_data = {"available": False, "error": str(exc)[:180]}
+
+    hidden_assessment = assess_hidden_intelligence(
+        market, daily, derivatives, dominance_data, broad_context, event_risk
+    )
+    apply_intelligence_gate(daily, hidden_assessment)
 
     side = "long" if daily.get("signal") == "BUY" else "short" if daily.get("signal") == "SELL" else None
     structural_long = _levels(candles_by_tf["1d"], "long", float(daily.get("price") or 0))
