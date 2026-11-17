@@ -1245,6 +1245,48 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             "available": False,
             "note": "داده مشتقات عمومی طلا/نقره در این نسخه متصل نیست."
         }
+
+    # Execution-quality gates: stale/unavailable quote or an abnormally wide
+    # observable spot spread blocks a fresh entry, without changing historical analysis.
+    quote_age_limit = 60 if market == "crypto" else 900
+    quote_is_fresh = bool(result["live_quote"].get("available")
+                          and result["live_quote"].get("age_seconds") is not None
+                          and result["live_quote"].get("age_seconds") <= quote_age_limit)
+    execution_flags = []
+    execution_blocked = False
+    if not quote_is_fresh:
+        execution_flags.append("BLOCK: قیمت زنده ناموجود یا قدیمی است؛ ورود جدید مجاز نیست")
+        execution_blocked = True
+    spread_bps = (result.get("derivatives") or {}).get("spot_spread_basis_points")
+    if market == "crypto" and spread_bps is not None:
+        max_spread = float(os.getenv("MAX_ENTRY_SPREAD_BPS", "20"))
+        if spread_bps > max_spread:
+            execution_flags.append("BLOCK: اسپرد دفتر سفارش از آستانه مجاز بیشتر است")
+            execution_blocked = True
+    if execution_blocked:
+        result["signal"] = "WAIT"
+        result["entry_price"] = None
+        result["stop_loss"] = None
+        result["take_profit_1"] = result["take_profit_2"] = result["take_profit_3"] = None
+        result["trade_plan"] = {"entry": None, "stop_loss": None, "targets": [],
+                                "risk_reward": [], "entry_basis": "کیفیت قیمت/اجرا برای ورود کافی نیست."}
+        result.setdefault("wait_reason", []).extend(execution_flags)
+        risk = result.setdefault("risk_management", {})
+        risk["risk_gate_passed"] = False
+        risk.setdefault("risk_flags", []).extend(execution_flags)
+        smart = result.get("smart_entry") or {}
+        smart["risk_gate_passed"] = False
+        smart["risk_flags"] = list(smart.get("risk_flags") or []) + execution_flags
+        for side in ("long", "short"):
+            if isinstance(smart.get(side), dict) and smart[side].get("available"):
+                smart[side]["status"] = "BLOCKED_BY_EXECUTION_QUALITY"
+        result["smart_entry"] = smart
+    result["execution_quality"] = {
+        "quote_fresh": quote_is_fresh, "quote_age_limit_seconds": quote_age_limit,
+        "spread_basis_points": spread_bps,
+        "max_spread_basis_points": float(os.getenv("MAX_ENTRY_SPREAD_BPS", "20")),
+        "blocked": execution_blocked, "flags": execution_flags
+    }
     result["liquidation_heatmap"] = {"available": False, "disabled": True, "note": "نقشه شلوغ قبلی حذف شد."}
     result["liquidation_context"] = {"available": False, "note": "برای جلوگیری از امتیازدهی به خوشه‌های تخمینی نامطمئن، از امتیاز سیگنال حذف شد."}
     result["economic_event_risk"] = economic_event_risk(market)
