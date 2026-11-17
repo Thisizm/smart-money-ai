@@ -250,7 +250,7 @@ def get_live_quote(market, symbol):
     if market == "crypto":
         try:
             params = urllib.parse.urlencode({"symbol": symbol})
-            data = fetch_json("https://api.binance.com/api/v3/ticker/24hr?" + params, timeout=8)
+            data = fetch_json("https://data-api.binance.vision/api/v3/ticker/24hr?" + params, timeout=8)
             price = float(data["lastPrice"])
             stamp_ms = int(data.get("closeTime") or int(now * 1000))
             result = {
@@ -272,16 +272,15 @@ def get_live_quote(market, symbol):
                 if data.get("close") is None:
                     raise RuntimeError(str(data.get("message") or data.get("status") or "Quote has no close price"))
                 price = float(data["close"])
-                stamp = data.get("timestamp")
-                if stamp is not None:
-                    stamp = int(stamp)
-                else:
-                    stamp = int(now)
+                stamp = data.get("last_quote_at") or data.get("timestamp")
+                stamp = int(stamp) if stamp is not None else None
                 result = {
                     "available": True, "price": price, "source": "Twelve Data Quote",
-                    "source_symbol": symbol, "source_timestamp": datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat(),
-                    "age_seconds": max(0, int(now - stamp)), "is_proxy": False,
-                    "note": "قیمت ارائه‌دهنده Twelve Data؛ مرجع و نماد TradingView باید یکسان باشد."
+                    "source_symbol": symbol,
+                    "source_timestamp": datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat() if stamp else None,
+                    "age_seconds": max(0, int(now - stamp)) if stamp else None,
+                    "is_market_open": data.get("is_market_open"), "is_proxy": False,
+                    "note": "قیمت ارائه‌دهنده Twelve Data؛ دسترسی real-time به نماد و پلن بستگی دارد و مرجع TradingView باید یکسان باشد."
                 }
             except Exception as exc:
                 errors.append("Twelve Data quote: " + str(exc)[:140])
