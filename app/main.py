@@ -41,6 +41,7 @@ CRYPTO_DEFAULT = [
 ]
 CRYPTO = list(CRYPTO_DEFAULT)
 METALS = {"gold": "XAUUSDT", "silver": "XAGUSDT"}
+TWELVE_DATA_METAL_SYMBOLS = {"XAUUSDT": "XAU/USD", "XAGUSDT": "XAG/USD"}
 TIMEFRAMES = {
     "5m": {"binance": "5m", "twelve": "5min"},
     "15m": {"binance": "15m", "twelve": "15min"},
@@ -245,15 +246,21 @@ def get_yahoo_metals_candles(market, timeframe):
 
 
 def get_twelve_data_metals_candles(symbol, timeframe):
+    """Fetch spot precious-metal candles from Twelve Data after Binance Futures is unavailable."""
+    if not TWELVE_DATA_API_KEY:
+        raise RuntimeError("TWELVE_DATA_API_KEY در تنظیمات Render ثبت نشده است")
+    provider_symbol = TWELVE_DATA_METAL_SYMBOLS.get(symbol)
+    if not provider_symbol:
+        raise RuntimeError("Unsupported Twelve Data metal symbol")
     tf = TIMEFRAMES[timeframe]
     params = urllib.parse.urlencode({
-        "symbol": symbol, "interval": tf["twelve"], "outputsize": 250,
+        "symbol": provider_symbol, "interval": tf["twelve"], "outputsize": 250,
         "apikey": TWELVE_DATA_API_KEY, "format": "JSON", "timezone": "UTC"
     })
-    data = fetch_json("https://api.twelvedata.com/time_series?" + params)
+    data = fetch_json("https://api.twelvedata.com/time_series?" + params, timeout=20)
     if "values" not in data:
         message = data.get("message") or data.get("status") or "No time-series values"
-        raise RuntimeError("Twelve Data: " + str(message)[:180])
+        raise RuntimeError("Twelve Data " + provider_symbol + ": " + str(message)[:180])
     candles = []
     for row in reversed(data["values"]):
         stamp = row.get("datetime", "")
@@ -270,10 +277,12 @@ def get_twelve_data_metals_candles(symbol, timeframe):
             "time": int(parsed.timestamp() * 1000),
             "open": float(row["open"]), "high": float(row["high"]),
             "low": float(row["low"]), "close": float(row["close"]),
-            "volume": float(row.get("volume") or 0)
+            "volume": float(row.get("volume") or 0),
+            "source": "Twelve Data Commodity Aggregate",
+            "source_symbol": provider_symbol
         })
     if len(candles) < 50:
-        raise RuntimeError("Twelve Data returned insufficient candles")
+        raise RuntimeError("Twelve Data returned insufficient candles for " + provider_symbol)
     return candles
 
 
@@ -283,7 +292,7 @@ def get_live_quote(market, symbol):
     now = time.time()
     with QUOTE_CACHE_LOCK:
         cached = QUOTE_CACHE.get(cache_key)
-        cache_ttl = 3
+        cache_ttl = 30 if market in METALS else 3
         if cached and now - cached["at"] < cache_ttl:
             cached_data = dict(cached["data"])
             source_timestamp = cached_data.get("source_timestamp")
@@ -328,8 +337,33 @@ def get_live_quote(market, symbol):
                 "instrument_type": "USDT-settled perpetual futures",
                 "note": "قیمت قرارداد دائمی TradFi بایننس؛ اسپات فیزیکی نیست و ممکن است با فید CAPITALCOM:XAUUSD/XAGUSD اختلاف داشته باشد."
             }
-        except Exception as exc:
-            errors.append("Binance USD-M ticker: " + str(exc)[:140])
+        except Exception as binance_exc:
+            errors.append("Binance USD-M ticker: " + str(binance_exc)[:140])
+            if TWELVE_DATA_API_KEY:
+                try:
+                    provider_symbol = TWELVE_DATA_METAL_SYMBOLS[symbol]
+                    params = urllib.parse.urlencode({
+                        "symbol": provider_symbol, "apikey": TWELVE_DATA_API_KEY,
+                        "format": "JSON", "timezone": "UTC"
+                    })
+                    data = fetch_json("https://api.twelvedata.com/quote?" + params, timeout=15)
+                    price = float(data["close"])
+                    stamp = int(data.get("last_quote_at") or data.get("timestamp") or 0)
+                    result = {
+                        "available": True, "price": price,
+                        "source": "Twelve Data Commodity Aggregate",
+                        "source_symbol": provider_symbol,
+                        "source_timestamp": datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat() if stamp else None,
+                        "age_seconds": max(0, int(now - stamp)) if stamp else None,
+                        "is_proxy": False,
+                        "is_market_open": data.get("is_market_open"),
+                        "note": "قیمت اسپات تجمیعی " + provider_symbol + " از Twelve Data؛ فید آن با CAPITALCOM در TradingView ممکن است اختلاف جزئی داشته باشد."
+                    }
+                except Exception as twelve_exc:
+                    errors.append("Twelve Data quote: " + str(twelve_exc)[:140])
+            else:
+                errors.append("برای قیمت اسپات طلا/نقره، TWELVE_DATA_API_KEY را در Render تنظیم کن.")
+
 
     if result is None:
         result = {
@@ -375,15 +409,21 @@ def get_candles(market, symbol, timeframe):
                 raise RuntimeError("Binance Futures returned fewer than 60 candles")
             return [{
                 "time": int(row[0]), "open": float(row[1]), "high": float(row[2]),
-                "low": float(row[3]), "close": float(row[4]), "volume": float(row[5])
+                "low": float(row[3]), "close": float(row[4]), "volume": float(row[5]),
+                "source": "Binance USD-M Futures", "source_symbol": symbol
             } for row in raw]
-        except Exception as exc:
-            raise HTTPException(
-                502,
-                "دریافت کندل " + symbol + " از Binance USD-M Futures ناموفق بود: " +
-                str(exc)[:180] +
-                ". در صورت محدودیت منطقه‌ای یا در دسترس نبودن قرارداد، داده فلز نمایش داده نمی‌شود و منبع دیگری جایگزین نخواهد شد."
-            )
+        except Exception as binance_exc:
+            try:
+                fallback_candles = get_twelve_data_metals_candles(symbol, timeframe)
+                return fallback_candles
+            except Exception as twelve_exc:
+                raise HTTPException(
+                    502,
+                    "دریافت کندل فلز از Binance USD-M ناموفق بود (" +
+                    str(binance_exc)[:100] + "). منبع جایگزین Twelve Data نیز در دسترس نیست (" +
+                    str(twelve_exc)[:140] + "). برای فعال‌شدن قیمت اسپات XAU/USD و XAG/USD، کلید دارای دسترسی مناسب Twelve Data را با نام TWELVE_DATA_API_KEY در Render ثبت کن."
+                )
+
 
     raise HTTPException(400, "فقط کریپتو، طلا و نقره پشتیبانی می‌شوند")
 
@@ -868,6 +908,7 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     candles = get_candles(market, symbol, timeframe)
     result = analyze(candles, market, symbol, timeframe)
     result["analysis_price"] = result.get("price")
+    result["candle_source"] = (candles[-1].get("source") if candles else None) or ("Binance Spot" if market == "crypto" else "Binance USD-M Futures")
     result["live_quote"] = get_live_quote(market, symbol)
     if market == "crypto":
         result["derivatives"] = get_crypto_derivatives(symbol)
