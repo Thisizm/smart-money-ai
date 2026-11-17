@@ -177,11 +177,11 @@ function showA(d){
  metric("BOS",d.bos)+metric("CHOCH",d.choch)+metric("FVG",d.fvg);
  document.getElementById("reasons").innerHTML=(d.analysis||[]).map(x=>"<li>"+x+"</li>").join("");
  let details=[];
- const obApprox=d.order_block_approx||{},der=d.derivatives||{},risk=d.risk_management||{},a=d.advanced_analysis||{},vp=a.volume_profile||{},pd=a.premium_discount||{},macd=a.macd||{};
+ const obApprox=d.order_block_approx||{},detailDer=d.derivatives||{},detailRisk=d.risk_management||{},detailA=d.advanced_analysis||{},detailVp=detailA.volume_profile||{},detailPd=detailA.premium_discount||{},detailMacd=detailA.macd||{};
  details.push('<div class="item"><b>ساختار:</b> '+(d.market_structure||"—")+' | <b>OB:</b> '+(obApprox.type||"ندارد")+' '+(obApprox.low==null?"":fmt(obApprox.low)+" تا "+fmt(obApprox.high))+' | <b>FVG:</b> '+(d.fvg||"—")+'</div>');
- details.push('<div class="item"><b>تأییدها:</b> ADX '+fmt((a.adx||{}).value)+' | MACD '+fmt(macd.histogram)+' | حجم نسبی '+fmt((a.momentum||{}).relative_volume)+'x | POC '+fmt(vp.poc)+' | ناحیه '+(pd.zone||"—")+'</div>');
- if(market.value==="crypto")details.push('<div class="item"><b>مشتقات:</b> Funding '+fmt(der.funding_rate_percent)+'% | OI '+fmt(der.open_interest_contracts)+' | نسبت لانگ/شورت '+fmt(der.long_short_account_ratio)+'</div>');
- details.push('<div class="item"><b>ریسک:</b> '+(risk.risk_gate_passed===false?"ورود مسدود":"فیلتر اولیه عبور کرده")+(risk.risk_flags&&risk.risk_flags.length?" | "+risk.risk_flags.join("؛ "):"")+'</div>');
+ details.push('<div class="item"><b>تأییدها:</b> ADX '+fmt((detailA.adx||{}).value)+' | MACD '+fmt(detailMacd.histogram)+' | حجم نسبی '+fmt((detailA.momentum||{}).relative_volume)+'x | POC '+fmt(detailVp.poc)+' | ناحیه '+(detailPd.zone||"—")+'</div>');
+ if(market.value==="crypto")details.push('<div class="item"><b>مشتقات:</b> Funding '+fmt(detailDer.funding_rate_percent)+'% | OI '+fmt(detailDer.open_interest_contracts)+' | نسبت لانگ/شورت '+fmt(detailDer.long_short_account_ratio)+'</div>');
+ details.push('<div class="item"><b>ریسک:</b> '+(detailRisk.risk_gate_passed===false?"ورود مسدود":"فیلتر اولیه عبور کرده")+(detailRisk.risk_flags&&detailRisk.risk_flags.length?" | "+detailRisk.risk_flags.join("؛ "):"")+'</div>');
  const ev=d.economic_event_risk||{},ext=d.external_confirmation||{};
  details.push('<div class="item"><b>ریسک خبر:</b> '+(ev.next_high_event?(ev.next_high_event.name+' | '+ev.next_high_event.minutes_until+' دقیقه تا انتشار'):(ev.note||"نامشخص"))+'</div>');
  if(market.value==="crypto")details.push('<div class="item"><b>تأیید مستقل MarginPad:</b> '+(ext.available?((ext.verdict||"—")+" | امتیاز "+fmt(ext.score)+" | روند "+(ext.trend||"—")):(ext.note||"دریافت نشد"))+'</div>');
