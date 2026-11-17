@@ -916,6 +916,77 @@ def analyze(candles, market, symbol, timeframe):
             "confirmation": "بسته‌شدن کندل زیر سطح شکست و ترجیحاً پولبک ناموفق"
         }
     }
+
+    # Smart Entry: propose a pullback zone from unmitigated OB/FVG or EMA21.
+    # A zone touch alone is never enough; confirmation requires a closed candle reaction.
+    ema21 = e21
+    smart_candidates = {"long": [], "short": []}
+    if order_block and not order_block.get("mitigated"):
+        ob_low, ob_high = float(order_block["low"]), float(order_block["high"])
+        if "صعودی" in order_block.get("type", "") and ob_high <= price + atr * 0.25:
+            smart_candidates["long"].append(("order_block", ob_low, ob_high))
+        elif "نزولی" in order_block.get("type", "") and ob_low >= price - atr * 0.25:
+            smart_candidates["short"].append(("order_block", ob_low, ob_high))
+    if bullish_fvg_zone and bullish_fvg_zone["high"] <= price + atr * 0.25:
+        smart_candidates["long"].append(("fvg", float(bullish_fvg_zone["low"]), float(bullish_fvg_zone["high"])))
+    if bearish_fvg_zone and bearish_fvg_zone["low"] >= price - atr * 0.25:
+        smart_candidates["short"].append(("fvg", float(bearish_fvg_zone["low"]), float(bearish_fvg_zone["high"])))
+    ema_band = max(atr * 0.12, abs(price) * 0.0002)
+    if ema21 < price:
+        smart_candidates["long"].append(("ema21", max(0.0, ema21 - ema_band), ema21 + ema_band))
+    if ema21 > price:
+        smart_candidates["short"].append(("ema21", max(0.0, ema21 - ema_band), ema21 + ema_band))
+
+    def make_pullback_plan(side):
+        candidates = []
+        for source, low, high in smart_candidates[side]:
+            if low <= 0 or high <= low:
+                continue
+            distance = max(0.0, low - price, price - high)
+            if distance <= atr * 3.0:
+                candidates.append((distance, source, low, high))
+        if not candidates:
+            return {
+                "available": False, "status": "NO_ZONE",
+                "note": "ناحیه پولبک معتبر و نزدیک بر اساس OB/FVG/EMA21 پیدا نشد؛ از ساختن سطح مصنوعی خودداری شد."
+            }
+        _, source, zone_low, zone_high = min(candidates, key=lambda item: item[0])
+        midpoint = (zone_low + zone_high) / 2.0
+        touched = last["low"] <= zone_high and last["high"] >= zone_low
+        reaction = (last["close"] > last["open"] and last["close"] >= midpoint) if side == "long" else (
+            last["close"] < last["open"] and last["close"] <= midpoint
+        )
+        confirmed = bool(touched and reaction and not risk_blocked)
+        entry = midpoint
+        buffer = max(atr * 0.25, abs(entry) * 0.0005)
+        stop_price = max(0.0, zone_low - buffer) if side == "long" else zone_high + buffer
+        unit_risk = entry - stop_price if side == "long" else stop_price - entry
+        targets_smart = (
+            [entry + unit_risk * r for r in (1.5, 2.5, 3.5)] if side == "long"
+            else [max(0.0, entry - unit_risk * r) for r in (1.5, 2.5, 3.5)]
+        )
+        return {
+            "available": True,
+            "status": "CONFIRMED_ON_CLOSED_CANDLE" if confirmed else "WAIT_FOR_PULLBACK_CONFIRMATION",
+            "zone": {"low": round(zone_low, 10), "high": round(zone_high, 10)},
+            "entry": round(entry, 10), "stop_loss": round(stop_price, 10),
+            "targets": [round(value, 10) for value in targets_smart],
+            "source": source, "touched_by_last_closed_candle": bool(touched),
+            "reaction_confirmed": bool(reaction), "risk_gate_passed": not risk_blocked,
+            "confirmation": "پس از لمس ناحیه، کندل بسته‌شده باید واکنش هم‌جهت نشان دهد؛ سپس قیمت زنده باید هنوز در محدوده قابل قبول باشد.",
+            "note": "این سطح تخمینی است؛ لمس ناحیه به‌تنهایی مجوز ورود نیست."
+        }
+
+    smart_long = make_pullback_plan("long")
+    smart_short = make_pullback_plan("short")
+    preferred_side = "long" if bull - bear >= 8 else "short" if bear - bull >= 8 else "neutral"
+    smart_entry = {
+        "preferred_side": preferred_side,
+        "long": smart_long, "short": smart_short,
+        "risk_gate_passed": not risk_blocked,
+        "method": "nearest unmitigated OB/FVG or EMA21 pullback; closed-candle reaction required",
+        "note": "ناحیه‌ها تخمینی‌اند و امتیازها احتمال آماری موفقیت نیستند. قیمت زنده را پیش از هر تصمیم دوباره بررسی کن."
+    }
     return {
         "market": market, "symbol": symbol, "timeframe": timeframe,
         "signal": direction, "bias": bias,
