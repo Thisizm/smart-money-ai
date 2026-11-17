@@ -86,7 +86,7 @@ def _http_error_body(exc):
     detail_text = json.dumps(details, ensure_ascii=False, default=str)
     retry_after = exc.headers.get("Retry-After") if exc.headers else None
     if not retry_after:
-        match = re.search(r'"retryDelay"\\s*:\\s*"([0-9.]+)s"', detail_text)
+        match = re.search(r'"retryDelay"\s*:\s*"([0-9.]+)s"', detail_text)
         if match:
             retry_after = match.group(1)
     try:
@@ -96,7 +96,7 @@ def _http_error_body(exc):
     quota_text = (message + " " + status + " " + detail_text).lower()
     daily_quota = any(token in quota_text for token in (
         "per_day", "per day", "daily", "requests_per_day",
-        "generate_content_free_tier_requests_per_day", "quota exceeded"
+        "generate_content_free_tier_requests_per_day"
     ))
     return message[:1000], retry_seconds, daily_quota
 
