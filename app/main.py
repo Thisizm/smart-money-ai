@@ -629,12 +629,12 @@ def analyze(candles, market, symbol, timeframe):
             zone_low, zone_high = older["high"], current["low"]
             filled = any(candles[j]["low"] <= zone_low for j in range(i + 1, len(candles)))
             if not filled:
-                bullish_fvg_zone = {"low": zone_low, "high": zone_high, "time": current["time"]}
+                bullish_fvg_zone = {"low": zone_low, "high": zone_high, "time": current["time"], "formation_index": i}
         if older["low"] - current["high"] >= min_gap:
             zone_low, zone_high = current["high"], older["low"]
             filled = any(candles[j]["high"] >= zone_high for j in range(i + 1, len(candles)))
             if not filled:
-                bearish_fvg_zone = {"low": zone_low, "high": zone_high, "time": current["time"]}
+                bearish_fvg_zone = {"low": zone_low, "high": zone_high, "time": current["time"], "formation_index": i}
 
     bullish_fvg = bullish_fvg_zone is not None
     bearish_fvg = bearish_fvg_zone is not None
@@ -941,38 +941,45 @@ def analyze(candles, market, symbol, timeframe):
     if order_block and not order_block.get("mitigated"):
         ob_low, ob_high = float(order_block["low"]), float(order_block["high"])
         if "صعودی" in order_block.get("type", "") and ob_high <= price + atr * 0.25:
-            smart_candidates["long"].append(("order_block", ob_low, ob_high))
+            smart_candidates["long"].append(("order_block", ob_low, ob_high, candles.index(next(c for c in candles if c["time"] == order_block.get("displacement_time")))))
         elif "نزولی" in order_block.get("type", "") and ob_low >= price - atr * 0.25:
-            smart_candidates["short"].append(("order_block", ob_low, ob_high))
+            smart_candidates["short"].append(("order_block", ob_low, ob_high, candles.index(next(c for c in candles if c["time"] == order_block.get("displacement_time")))))
     if bullish_fvg_zone and bullish_fvg_zone["high"] <= price + atr * 0.25:
-        smart_candidates["long"].append(("fvg", float(bullish_fvg_zone["low"]), float(bullish_fvg_zone["high"])))
+        smart_candidates["long"].append(("fvg", float(bullish_fvg_zone["low"]), float(bullish_fvg_zone["high"]), int(bullish_fvg_zone["formation_index"])))
     if bearish_fvg_zone and bearish_fvg_zone["low"] >= price - atr * 0.25:
-        smart_candidates["short"].append(("fvg", float(bearish_fvg_zone["low"]), float(bearish_fvg_zone["high"])))
+        smart_candidates["short"].append(("fvg", float(bearish_fvg_zone["low"]), float(bearish_fvg_zone["high"]), int(bearish_fvg_zone["formation_index"])))
     ema_band = max(atr * 0.12, abs(price) * 0.0002)
     if ema21 < price:
-        smart_candidates["long"].append(("ema21", max(0.0, ema21 - ema_band), ema21 + ema_band))
+        smart_candidates["long"].append(("ema21", max(0.0, ema21 - ema_band), ema21 + ema_band, len(candles) - 2))
     if ema21 > price:
-        smart_candidates["short"].append(("ema21", max(0.0, ema21 - ema_band), ema21 + ema_band))
+        smart_candidates["short"].append(("ema21", max(0.0, ema21 - ema_band), ema21 + ema_band, len(candles) - 2))
 
     def make_pullback_plan(side):
         candidates = []
-        for source, low, high in smart_candidates[side]:
-            if low <= 0 or high <= low:
+        for source, low, high, formation_index in smart_candidates[side]:
+            if low <= 0 or high <= low or formation_index >= len(candles) - 1:
                 continue
             distance = max(0.0, low - price, price - high)
             if distance <= atr * 3.0:
-                candidates.append((distance, source, low, high))
+                candidates.append((distance, source, low, high, formation_index))
         if not candidates:
             return {
                 "available": False, "status": "NO_ZONE",
                 "note": "ناحیه پولبک معتبر و نزدیک بر اساس OB/FVG/EMA21 پیدا نشد؛ از ساختن سطح مصنوعی خودداری شد."
             }
-        _, source, zone_low, zone_high = min(candidates, key=lambda item: item[0])
+        _, source, zone_low, zone_high, formation_index = min(candidates, key=lambda item: item[0])
         midpoint = (zone_low + zone_high) / 2.0
-        touched = last["low"] <= zone_high and last["high"] >= zone_low
-        reaction = (last["close"] > last["open"] and last["close"] >= midpoint) if side == "long" else (
-            last["close"] < last["open"] and last["close"] <= midpoint
-        )
+        # A zone cannot be retested by the candle that created it. Only candles
+        # strictly after formation are eligible to count as a revisit.
+        post_formation = candles[formation_index + 1:]
+        touched = bool(post_formation and post_formation[-1]["low"] <= zone_high and post_formation[-1]["high"] >= zone_low)
+        retest_time = post_formation[-1]["time"] if post_formation else None
+        reaction_candle = post_formation[-1] if post_formation else None
+        reaction = bool(reaction_candle and (
+            (reaction_candle["close"] > reaction_candle["open"] and reaction_candle["close"] >= midpoint)
+            if side == "long" else
+            (reaction_candle["close"] < reaction_candle["open"] and reaction_candle["close"] <= midpoint)
+        ))
         confirmed = bool(touched and reaction and not risk_blocked)
         entry = midpoint
         buffer = max(atr * 0.25, abs(entry) * 0.0005)
@@ -988,9 +995,11 @@ def analyze(candles, market, symbol, timeframe):
             "zone": {"low": round(zone_low, 10), "high": round(zone_high, 10)},
             "entry": round(entry, 10), "stop_loss": round(stop_price, 10),
             "targets": [round(value, 10) for value in targets_smart],
-            "source": source, "touched_by_last_closed_candle": bool(touched),
+            "source": source, "formation_time": candles[formation_index]["time"],
+            "retest_time": retest_time,
+            "touched_by_post_formation_closed_candle": bool(touched),
             "reaction_confirmed": bool(reaction), "risk_gate_passed": not risk_blocked,
-            "confirmation": "پس از لمس ناحیه، کندل بسته‌شده باید واکنش هم‌جهت نشان دهد؛ سپس قیمت زنده باید هنوز در محدوده قابل قبول باشد.",
+            "confirmation": "کندل تشکیل‌دهنده ناحیه retest محسوب نمی‌شود؛ یک کندل بسته‌شده بعدی باید ناحیه را لمس و در جهت معامله واکنش نشان دهد. تأیید قیمت زنده در endpoint جداگانه انجام می‌شود.",
             "note": "این سطح تخمینی است؛ لمس ناحیه به‌تنهایی مجوز ورود نیست."
         }
 
