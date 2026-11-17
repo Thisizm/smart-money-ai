@@ -244,8 +244,17 @@ def get_live_quote(market, symbol):
     now = time.time()
     with QUOTE_CACHE_LOCK:
         cached = QUOTE_CACHE.get(cache_key)
-        if cached and now - cached["at"] < 3:
-            return cached["data"]
+        cache_ttl = 3 if market == "crypto" else 30
+        if cached and now - cached["at"] < cache_ttl:
+            cached_data = dict(cached["data"])
+            source_timestamp = cached_data.get("source_timestamp")
+            if source_timestamp:
+                try:
+                    source_epoch = datetime.fromisoformat(source_timestamp).timestamp()
+                    cached_data["age_seconds"] = max(0, int(now - source_epoch))
+                except (TypeError, ValueError):
+                    pass
+            return cached_data
 
     errors = []
     result = None
