@@ -333,7 +333,7 @@ def opportunity_asset(symbol: str, market: str = "crypto"):
     report = {
         "headline": headline,
         "context": context,
-        "trend_summary": "هفتگی: " + weekly_side + " | روزانه: " + daily_side + " | چهار ساعته: " + four_side + " | یک ساعته: " + one_hour_side,
+        "trend_summary": "هفتگی: " + weekly_side + " | روزانه: " + daily_side + " | چهار ساعته: " + four_side + " | یک ساعته: " + one_hour_side + " | پانزده دقیقه: " + fifteen_side,
         "market_location": (daily.get("scenario_analysis") or {}).get("location"),
         "bullish_scenario": (daily.get("scenario_analysis") or {}).get("bullish"),
         "bearish_scenario": (daily.get("scenario_analysis") or {}).get("bearish"),
