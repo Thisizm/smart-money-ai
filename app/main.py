@@ -964,40 +964,94 @@ def analyze(candles, market, symbol, timeframe):
                 "available": False, "status": "NO_ZONE",
                 "note": "ناحیه پولبک معتبر و نزدیک بر اساس OB/FVG/EMA21 پیدا نشد؛ از ساختن سطح مصنوعی خودداری شد."
             }
+
         _, source, zone_low, zone_high, formation_index = min(candidates, key=lambda item: item[0])
         midpoint = (zone_low + zone_high) / 2.0
-        # A zone cannot be retested by the candle that created it. Only candles
-        # strictly after formation are eligible to count as a revisit.
         post_formation = candles[formation_index + 1:]
-        touched = bool(post_formation and post_formation[-1]["low"] <= zone_high and post_formation[-1]["high"] >= zone_low)
-        retest_time = post_formation[-1]["time"] if post_formation else None
-        reaction_candle = post_formation[-1] if post_formation else None
-        reaction = bool(reaction_candle and (
-            (reaction_candle["close"] > reaction_candle["open"] and reaction_candle["close"] >= midpoint)
-            if side == "long" else
-            (reaction_candle["close"] < reaction_candle["open"] and reaction_candle["close"] <= midpoint)
-        ))
+        retest_candle = post_formation[-1] if post_formation else None
+        touched = bool(retest_candle and retest_candle["low"] <= zone_high
+                       and retest_candle["high"] >= zone_low)
+        retest_time = retest_candle["time"] if touched else None
+
+        # A valid rejection must show directional body strength and close near
+        # the candle extreme; a simple green/red candle inside the zone is not enough.
+        candle_range = max(1e-12, retest_candle["high"] - retest_candle["low"]) if retest_candle else 1.0
+        body_ratio = (abs(retest_candle["close"] - retest_candle["open"]) / candle_range) if retest_candle else 0.0
+        close_location = ((retest_candle["close"] - retest_candle["low"]) / candle_range) if retest_candle else 0.5
+        prior_close = post_formation[-2]["close"] if len(post_formation) >= 2 else None
+        reaction = bool(
+            touched and body_ratio >= 0.45 and prior_close is not None and
+            ((retest_candle["close"] > retest_candle["open"]
+              and retest_candle["close"] >= midpoint
+              and retest_candle["close"] > prior_close
+              and close_location >= 0.65)
+             if side == "long" else
+             (retest_candle["close"] < retest_candle["open"]
+              and retest_candle["close"] <= midpoint
+              and retest_candle["close"] < prior_close
+              and close_location <= 0.35))
+        )
         confirmed = bool(touched and reaction and not risk_blocked)
-        entry = midpoint
-        buffer = max(atr * 0.25, abs(entry) * 0.0005)
-        stop_price = max(0.0, zone_low - buffer) if side == "long" else zone_high + buffer
+        # Before confirmation use the zone midpoint only as a reference. After
+        # confirmation use the actual closed rejection candle close as trigger.
+        entry = float(retest_candle["close"]) if confirmed else midpoint
+        buffer = max(atr * 0.20, abs(entry) * 0.0005)
+        structural_stop = swing_low - buffer if side == "long" else swing_high + buffer
+        stop_price = structural_stop
         unit_risk = entry - stop_price if side == "long" else stop_price - entry
+
+        # A structural stop must sit beyond the invalidation swing and remain
+        # proportionate. If not, reject the setup rather than inventing an ATR stop.
+        if unit_risk <= 0 or unit_risk > atr * 3.0:
+            return {
+                "available": False, "status": "NO_VALID_STRUCTURAL_STOP",
+                "source": source, "zone": {"low": round(zone_low, 10), "high": round(zone_high, 10)},
+                "note": "حد ضرر ساختاری معتبر و متناسب پشت سوئینگ اخیر پیدا نشد؛ این ستاپ حذف شد."
+            }
+
+        # The first target must be a real opposing swing-liquidity level with
+        # at least 1.5R room. No fixed-R target is substituted when structure
+        # offers insufficient space.
+        minimum_target = entry + unit_risk * 1.5 if side == "long" else entry - unit_risk * 1.5
+        liquidity_levels = (
+            [p["price"] for p in pivot_highs if p["price"] >= minimum_target]
+            if side == "long" else
+            [p["price"] for p in pivot_lows if p["price"] <= minimum_target]
+        )
+        if not liquidity_levels:
+            return {
+                "available": False, "status": "NO_STRUCTURAL_TARGET",
+                "source": source, "zone": {"low": round(zone_low, 10), "high": round(zone_high, 10)},
+                "stop_loss": round(stop_price, 10),
+                "note": "نقدینگی/سوئینگ مخالف با حداقل نسبت سود به زیان ۱.۵ پیدا نشد؛ ورود پیشنهاد نمی‌شود."
+            }
+        first_target = min(liquidity_levels) if side == "long" else max(liquidity_levels)
+        first_r = abs(first_target - entry) / unit_risk
+        second_r = max(2.5, first_r + 0.5)
+        third_r = max(3.5, second_r + 0.5)
         targets_smart = (
-            [entry + unit_risk * r for r in (1.5, 2.5, 3.5)] if side == "long"
-            else [max(0.0, entry - unit_risk * r) for r in (1.5, 2.5, 3.5)]
+            [first_target, entry + unit_risk * second_r, entry + unit_risk * third_r]
+            if side == "long" else
+            [first_target, max(0.0, entry - unit_risk * second_r), max(0.0, entry - unit_risk * third_r)]
         )
         return {
             "available": True,
             "status": "CONFIRMED_ON_CLOSED_CANDLE" if confirmed else "WAIT_FOR_PULLBACK_CONFIRMATION",
+            "setup_state": "TRIGGERED" if confirmed else ("WAITING_FOR_CONFIRMATION" if touched else "WAITING_FOR_RETEST"),
             "zone": {"low": round(zone_low, 10), "high": round(zone_high, 10)},
-            "entry": round(entry, 10), "stop_loss": round(stop_price, 10),
+            "entry": round(entry, 10), "entry_reference": round(midpoint, 10),
+            "stop_loss": round(stop_price, 10),
             "targets": [round(value, 10) for value in targets_smart],
+            "first_target_source": "opposing_confirmed_swing_liquidity",
+            "first_target_r": round(first_r, 2),
             "source": source, "formation_time": candles[formation_index]["time"],
             "retest_time": retest_time,
             "touched_by_post_formation_closed_candle": bool(touched),
-            "reaction_confirmed": bool(reaction), "risk_gate_passed": not risk_blocked,
-            "confirmation": "کندل تشکیل‌دهنده ناحیه retest محسوب نمی‌شود؛ یک کندل بسته‌شده بعدی باید ناحیه را لمس و در جهت معامله واکنش نشان دهد. تأیید قیمت زنده در endpoint جداگانه انجام می‌شود.",
-            "note": "این سطح تخمینی است؛ لمس ناحیه به‌تنهایی مجوز ورود نیست."
+            "reaction_confirmed": bool(reaction), "reaction_body_ratio": round(body_ratio, 3),
+            "risk_gate_passed": not risk_blocked,
+            "invalidation_level": round(stop_price, 10),
+            "confirmation": "ورود فقط پس از لمس ناحیه و کندل رد معتبر بسته‌شده با بدنه قوی و بسته‌شدن نزدیک انتهای کندل؛ ورود تریگر برابر بسته‌شدن همان کندل است.",
+            "note": "حد ضرر پشت سوئینگ ساختاری است؛ هدف اول نقدینگی مخالف واقعی با حداقل ۱.۵R است. سطح انتظار، سفارش فعال نیست."
         }
 
     smart_long = make_pullback_plan("long")
@@ -1226,15 +1280,35 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
                            and quote.get("age_seconds") <= (120 if market == "crypto" else 900))
         live_price = quote.get("price")
         zone = plan.get("zone") or {}
-        in_zone = bool(quote_fresh and live_price is not None
-                       and float(zone.get("low", 0)) <= float(live_price) <= float(zone.get("high", 0)))
+        live_value = float(live_price) if quote_fresh and live_price is not None else None
+        stop_value = float(plan.get("stop_loss")) if plan.get("stop_loss") is not None else None
+        invalidated = bool(live_value is not None and stop_value is not None and
+                           ((side == "long" and live_value <= stop_value) or
+                            (side == "short" and live_value >= stop_value)))
+        in_zone = bool(live_value is not None
+                       and float(zone.get("low", 0)) <= live_value <= float(zone.get("high", 0)))
         plan["live_quote_confirmed"] = in_zone
         plan["live_quote_source"] = quote.get("source") if quote_fresh else None
-        if plan.get("status") == "CONFIRMED_ON_CLOSED_CANDLE" and not in_zone:
+        plan["live_price_at_check"] = live_value
+        if invalidated:
+            plan["status"] = "INVALIDATED"
+            plan["setup_state"] = "INVALIDATED"
+            plan["live_quote_confirmed"] = False
+            plan["note"] = "سناریو با عبور قیمت زنده از حد ابطال ساختاری باطل شد؛ ورود و اهداف قبلی دیگر معتبر نیستند."
+        elif plan.get("status") == "CONFIRMED_ON_CLOSED_CANDLE" and not in_zone:
             plan["status"] = "WAIT_FOR_LIVE_PRICE_CONFIRMATION"
         elif plan.get("status") == "WAIT_FOR_PULLBACK_CONFIRMATION" and plan.get("reaction_confirmed") and in_zone and plan.get("risk_gate_passed"):
             plan["status"] = "CONFIRMED_ON_CLOSED_CANDLE"
-        plan["note"] = (plan.get("note", "") + " قیمت زنده نیز باید تازه و داخل ناحیه باشد؛ در غیر این صورت وضعیت انتظار است.").strip()
+        plan["note"] = (plan.get("note", "") + " قیمت زنده باید تازه و در محدوده مجاز باشد؛ در غیر این صورت ورود تأیید نمی‌شود.").strip()
+    preferred_plan = smart.get(smart.get("preferred_side", ""))
+    if isinstance(preferred_plan, dict) and preferred_plan.get("status") == "INVALIDATED":
+        result["signal"] = "WAIT"
+        result["entry_price"] = None
+        result["stop_loss"] = None
+        result["take_profit_1"] = result["take_profit_2"] = result["take_profit_3"] = None
+        result["trade_plan"] = {"entry": None, "stop_loss": None, "targets": [],
+                                "risk_reward": [], "entry_basis": "سناریوی ترجیحی با عبور قیمت زنده از حد ابطال باطل شده است."}
+        result.setdefault("wait_reason", []).append("سناریوی ورود قبلی با شکست حد ابطال ساختاری باطل شد؛ تحلیل تازه لازم است.")
     result["smart_entry"] = smart
     if market == "crypto":
         # Skip the hard-to-read third-party heatmap fetch. Keep observable Binance
