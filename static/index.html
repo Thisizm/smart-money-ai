@@ -87,6 +87,8 @@ function renderChart(d){
    axisLabelVisible:true,title
   });
  };
+ const q=d.live_quote||{};
+ if(q.available&&(!d.chart_source_symbol||q.source_symbol===d.chart_source_symbol))line(q.price,"#7dd3fc","قیمت زنده",LightweightCharts.LineStyle.Solid,1);
  const dashed=LightweightCharts.LineStyle.Dashed;
  const dotted=LightweightCharts.LineStyle.Dotted;
  line(levels.support,"#4f9de8","حمایت",dashed);
