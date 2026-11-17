@@ -462,7 +462,7 @@ async function loadOpportunities(force){
  status.textContent="در حال اسکن نمادهای نقدشونده با کندل‌های بسته‌شده روزانه و ۴ ساعته…";
  try{
   const market=document.getElementById("op-market").value;
-  const d=await get("/api/opportunities?market="+encodeURIComponent(market)+"&limit=12"+(force?"&refresh=true":""));
+  const d=await get("/api/opportunities?market="+encodeURIComponent(market)+"&limit=20"+(force?"&refresh=true":""));
   opportunityCache=d.results||[];
   const confirmed=opportunityCache.filter(x=>x.state==="CONFIRMED_SETUP").length;
   const waiting=opportunityCache.filter(x=>x.state==="WAITING_FOR_TRIGGER").length;
