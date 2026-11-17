@@ -2677,24 +2677,47 @@ AI_BRAIN_CACHE = {}
 AI_BRAIN_CACHE_LOCK = threading.Lock()
 
 
-def _compact_ai_evidence(value, depth=0):
-    """Remove chart payloads and cap verbose evidence before sending to Gemini."""
+def _compact_ai_evidence(value, depth=0, list_limit=8, string_limit=500, key_limit=55):
+    """Keep decision-relevant evidence while excluding chart/history payloads."""
     if depth > 8:
         return "[عمق داده محدود شد]"
     if isinstance(value, dict):
-        omitted = {"chart_candles", "rsi_chart", "rsi_series", "chart_markers",
-                   "liquidation_leverage_data", "price_candlesticks", "y_axis"}
-        return {
-            str(key): _compact_ai_evidence(item, depth + 1)
-            for key, item in value.items()
-            if key not in omitted
+        omitted = {
+            "chart_candles", "rsi_chart", "rsi_series", "chart_markers",
+            "liquidation_leverage_data", "price_candlesticks", "y_axis",
+            "raw_candles", "candles", "ohlcv", "historical_prices",
+            "full_history", "debug", "stack_trace", "html", "svg"
         }
-    if isinstance(value, list):
-        items = value[-30:] if len(value) > 30 else value
-        return [_compact_ai_evidence(item, depth + 1) for item in items]
+        result = {}
+        for key, item in value.items():
+            key_text = str(key)
+            key_lower = key_text.lower()
+            if key_text in omitted:
+                continue
+            if any(token in key_lower for token in (
+                "chart_data", "chart_series", "candle_history", "raw_response",
+                "full_payload", "historical_series"
+            )):
+                continue
+            if len(result) >= key_limit:
+                break
+            result[key_text] = _compact_ai_evidence(
+                item, depth + 1, list_limit, string_limit, key_limit
+            )
+        return result
+    if isinstance(value, (list, tuple)):
+        items = list(value)
+        if len(items) > list_limit:
+            items = items[-list_limit:]
+        return [
+            _compact_ai_evidence(item, depth + 1, list_limit, string_limit, key_limit)
+            for item in items
+        ]
     if isinstance(value, str):
-        return value[:1200]
-    return value
+        return value[:string_limit]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return str(value)[:string_limit]
 
 
 @app.post("/api/ai-decision")
@@ -2748,7 +2771,7 @@ async def ai_decision(request: Request):
         except Exception as exc:
             calendar = {"available": False, "error": str(exc)[:180]}
 
-        evidence = _compact_ai_evidence({
+        raw_evidence = {
             "market": market, "symbol": symbol, "requested_timeframe": timeframe,
             "selected_timeframe_analysis": technical,
             "all_timeframes": mtf,
@@ -2762,17 +2785,38 @@ async def ai_decision(request: Request):
                 "execution_quality": technical.get("execution_quality"),
                 "live_trading_enabled": False
             }
-        })
+        }
+        # First pass keeps the full six-timeframe picture and the latest evidence items.
+        evidence = _compact_ai_evidence(raw_evidence)
         encoded = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), default=str)
-        # Preserve all top-level data groups while bounding request size for free-tier use.
+        # If a provider returns unusually verbose news/indicator objects, compact further
+        # without dropping the top-level evidence groups or the six timeframe labels.
         if len(encoded) > 42000:
-            evidence["all_timeframes"] = [
-                {k: v for k, v in item.items() if k not in ("advanced_analysis", "smart_entry")}
-                for item in evidence.get("all_timeframes", {}).get("timeframes", [])
-            ]
+            evidence = _compact_ai_evidence(
+                raw_evidence, list_limit=4, string_limit=240, key_limit=32
+            )
             encoded = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), default=str)
         if len(encoded) > 52000:
-            raise RuntimeError("حجم داده‌های تحلیلی بیش از حد مجاز است؛ یک بار دیگر با تایم‌فریم کوتاه‌تر امتحان کن.")
+            # Last-resort deterministic summary: keep all timeframe labels and only
+            # the compact technical fields for each timeframe, never raw chart arrays.
+            compact_mtf = mtf.get("timeframes", []) if isinstance(mtf, dict) else []
+            evidence = {
+                "market": market, "symbol": symbol, "requested_timeframe": timeframe,
+                "selected_timeframe_analysis": _compact_ai_evidence(
+                    technical, list_limit=3, string_limit=160, key_limit=24
+                ),
+                "all_timeframes": _compact_ai_evidence(
+                    compact_mtf, list_limit=6, string_limit=180, key_limit=20
+                ),
+                "macro_news_cot": _compact_ai_evidence(context, list_limit=3, string_limit=180, key_limit=18),
+                "crypto_dominance": _compact_ai_evidence(market_dominance, list_limit=3, string_limit=180, key_limit=18),
+                "cross_asset_correlations": _compact_ai_evidence(cross_asset, list_limit=6, string_limit=180, key_limit=18),
+                "economic_calendar": _compact_ai_evidence(calendar, list_limit=3, string_limit=180, key_limit=18),
+                "instructions": {"live_trading_enabled": False}
+            }
+            encoded = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), default=str)
+        if len(encoded) > 52000:
+            raise RuntimeError("حجم داده حتی پس از خلاصه‌سازی از حد مجاز بیشتر است؛ گزارش فشرده‌سازی لازم است.")
 
         ai_result = call_gemini(evidence)
         ai_result = validate_decision(
