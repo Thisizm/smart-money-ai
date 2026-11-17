@@ -1319,6 +1319,7 @@ def _build_dominance_payload(source, raw):
 
 
 @app.get("/api/dominance")
+@app.get("/api/dominance")
 def dominance():
     now = time.time()
     with DOMINANCE_LOCK:
@@ -1486,8 +1487,6 @@ def build_liquidation_context(result, heatmap, current_price):
         "note": reason
     }
 
-
-@app.get("/api/analyze")
 
 def news_query(asset):
     if asset == "gold":
