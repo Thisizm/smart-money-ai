@@ -1216,6 +1216,29 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     result["analysis_price"] = result.get("price")
     result["candle_source"] = (candles[-1].get("source") if candles else None) or ("Binance Spot" if market == "crypto" else "Twelve Data / Yahoo Finance metals fallback")
     result["live_quote"] = get_live_quote(market, symbol)
+    quote = result["live_quote"]
+    smart = result.get("smart_entry") or {}
+    for side in ("long", "short"):
+        plan = smart.get(side)
+        if not isinstance(plan, dict) or not plan.get("available") or plan.get("status") == "BLOCKED_BY_ECONOMIC_CALENDAR":
+            continue
+        # Closed-candle reaction is necessary but not sufficient: require a fresh,
+        # non-proxy quote still trading inside the proposed zone before confirmation.
+        quote_fresh = bool(quote.get("available") and not quote.get("is_proxy")
+                           and quote.get("age_seconds") is not None
+                           and quote.get("age_seconds") <= (120 if market == "crypto" else 900))
+        live_price = quote.get("price")
+        zone = plan.get("zone") or {}
+        in_zone = bool(quote_fresh and live_price is not None
+                       and float(zone.get("low", 0)) <= float(live_price) <= float(zone.get("high", 0)))
+        plan["live_quote_confirmed"] = in_zone
+        plan["live_quote_source"] = quote.get("source") if quote_fresh else None
+        if plan.get("status") == "CONFIRMED_ON_CLOSED_CANDLE" and not in_zone:
+            plan["status"] = "WAIT_FOR_LIVE_PRICE_CONFIRMATION"
+        elif plan.get("status") == "WAIT_FOR_PULLBACK_CONFIRMATION" and plan.get("reaction_confirmed") and in_zone and plan.get("risk_gate_passed"):
+            plan["status"] = "CONFIRMED_ON_CLOSED_CANDLE"
+        plan["note"] = (plan.get("note", "") + " قیمت زنده نیز باید تازه و داخل ناحیه باشد؛ در غیر این صورت وضعیت انتظار است.").strip()
+    result["smart_entry"] = smart
     if market == "crypto":
         # Skip the hard-to-read third-party heatmap fetch. Keep observable Binance
         # derivatives metrics as the source for positioning context.
@@ -1228,6 +1251,26 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     result["liquidation_heatmap"] = {"available": False, "disabled": True, "note": "نقشه شلوغ قبلی حذف شد."}
     result["liquidation_context"] = {"available": False, "note": "برای جلوگیری از امتیازدهی به خوشه‌های تخمینی نامطمئن، از امتیاز سیگنال حذف شد."}
     result["economic_event_risk"] = economic_event_risk(market)
+    event_risk = result["economic_event_risk"]
+    if event_risk.get("entry_blocked_by_calendar"):
+        # A high-impact release within 15 minutes blocks new entries at the API layer.
+        result["signal"] = "WAIT"
+        result["entry_price"] = None
+        result["stop_loss"] = None
+        result["take_profit_1"] = result["take_profit_2"] = result["take_profit_3"] = None
+        result["trade_plan"] = {"entry": None, "stop_loss": None, "targets": [],
+                                "risk_reward": [], "entry_basis": "ورود به‌دلیل رویداد اقتصادی پرریسک مسدود شد."}
+        result.setdefault("wait_reason", []).append("BLOCK: رویداد اقتصادی مهم در ۱۵ دقیقه آینده")
+        risk = result.setdefault("risk_management", {})
+        risk["risk_gate_passed"] = False
+        risk.setdefault("risk_flags", []).append("BLOCK: تقویم اقتصادی ورود جدید را متوقف کرد")
+        smart = result.get("smart_entry") or {}
+        smart["risk_gate_passed"] = False
+        smart["risk_flags"] = list(smart.get("risk_flags") or []) + ["BLOCK: تقویم اقتصادی ورود جدید را متوقف کرد"]
+        for side in ("long", "short"):
+            if isinstance(smart.get(side), dict) and smart[side].get("available"):
+                smart[side]["status"] = "BLOCKED_BY_ECONOMIC_CALENDAR"
+        result["smart_entry"] = smart
     if market == "crypto":
         result["external_confirmation"] = get_marginpad_screener_confirmation(symbol)
     else:
