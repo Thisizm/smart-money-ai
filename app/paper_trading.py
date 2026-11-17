@@ -328,10 +328,16 @@ def record_signal(result, entry_mode="smart"):
     status = "ACTIVE" if touched else "PENDING_ENTRY"
     filled_entry = live_price if touched else entry
     candle_time = result.get("last_candle_time")
-    fingerprint = "|".join(str(x) for x in (market, result.get("symbol", ""), result.get("timeframe", ""), candle_time or result.get("updated_at", ""), result["signal"], entry_mode))
     now = _now()
+    fingerprint = "|".join(str(x) for x in (market, result.get("symbol", ""), result.get("timeframe", ""), candle_time or result.get("updated_at", ""), result["signal"], entry_mode, now))
     note = "ورود آزمایشی؛ قیمت داخل محدوده بود." if touched else "سفارش شرطی آزمایشی؛ با رسیدن قیمت به نقطه ورود فعال می‌شود."
     with _LOCK, _connect() as con:
+        existing = con.execute(
+            "SELECT id, status FROM paper_trades WHERE market=? AND symbol=? AND timeframe=? AND source=? AND status IN ('PENDING_ENTRY','ACTIVE','TP1_HIT') ORDER BY id DESC LIMIT 1",
+            (market, result.get("symbol", ""), result.get("timeframe", ""), source)
+        ).fetchone()
+        if existing:
+            return {"recorded": False, "duplicate": True, "trade_id": existing["id"], "status": existing["status"], "source": source}
         cur = con.execute("""
             INSERT OR IGNORE INTO paper_trades
             (fingerprint, created_at, updated_at, market, symbol, timeframe, side, signal_candle_time, entry_price, entry_low, entry_high, signal_entry, last_quote_price, last_quote_at, stop_loss, target_1, target_2, target_3, status, source, note, quantity, notional, margin_used, leverage, initial_balance, risk_cash)
