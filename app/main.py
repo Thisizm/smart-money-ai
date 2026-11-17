@@ -470,6 +470,26 @@ def analyze(candles, market, symbol, timeframe):
     setup_score = min(100, max(bull, bear))
     price = last["close"]
 
+    risk_flags = []
+    risk_blocked = False
+    atr_percent = advanced["volatility"]["atr_percent"]
+    max_atr_percent = {"5m": 2.5, "15m": 3.5, "1h": 5.5, "4h": 8.5, "1d": 18.0, "1w": 30.0}.get(timeframe, 10.0)
+    structural_event = bos_up or bos_down or choch_up or choch_down or sweep_high or sweep_low
+    if atr_percent > max_atr_percent:
+        risk_flags.append("BLOCK: نوسان غیرعادی نسبت به تایم‌فریم؛ ورود جدید متوقف شد")
+        risk_blocked = True
+    if adx_data["value"] < 12 and not structural_event:
+        risk_flags.append("BLOCK: قدرت روند بسیار ضعیف و شکست ساختاری معتبر وجود ندارد")
+        risk_blocked = True
+    if not advanced["data_quality"]["volume_available"]:
+        risk_flags.append("حجم قابل اتکا از منبع فعلی موجود نیست؛ تأیید حجم غیرفعال است")
+    if direction == "BUY" and advanced["premium_discount"]["zone"] == "premium":
+        risk_flags.append("خرید در نیمه Premium دامنه؛ خطر تعقیب قیمت")
+    if direction == "SELL" and advanced["premium_discount"]["zone"] == "discount":
+        risk_flags.append("فروش در نیمه Discount دامنه؛ خطر تعقیب قیمت")
+    if risk_blocked:
+        direction = "WAIT"
+
     if direction == "BUY":
         structural_gap = price - swing_low
         buffer = max(atr * 0.20, price * 0.0005)
@@ -483,6 +503,12 @@ def analyze(candles, market, symbol, timeframe):
         risk = max(stop - price, atr * 0.5)
         targets = [price - risk * r for r in (1.5, 2.5, 3.5)]
     else:
+        stop, targets, risk = None, [None, None, None], None
+
+    if direction in ("BUY", "SELL") and price > 0 and risk is not None and risk / price > 0.06:
+        risk_flags.append("BLOCK: فاصله حدضرر بیش از ۶٪ قیمت است؛ نسبت ریسک به سرمایه نامناسب است")
+        risk_blocked = True
+        direction = "WAIT"
         stop, targets, risk = None, [None, None, None], None
 
     if choch_up:
@@ -562,6 +588,7 @@ def analyze(candles, market, symbol, timeframe):
 
     wait_reasons = []
     if direction == "WAIT":
+        wait_reasons.extend(risk_flags)
         if max(bull, bear) < 42:
             wait_reasons.append("امتیاز هم‌جهتی به حداقل ۴۲ نرسیده")
         if abs(bull - bear) < 8:
@@ -597,7 +624,10 @@ def analyze(candles, market, symbol, timeframe):
             "risk_budget_per_10000_account_value": 50.0,
             "position_size_formula": "risk_budget / abs(entry - stop_loss)",
             "max_daily_loss_reference_percent": 2.0,
-            "note": "مقادیر صرفاً الگوی مدیریت ریسک هستند؛ اندازه قرارداد، اهرم، کارمزد، اسلیپیج و سرمایه واقعی باید لحاظ شوند."
+            "risk_gate_passed": not risk_blocked,
+            "risk_flags": risk_flags,
+            "max_atr_percent_by_timeframe": max_atr_percent,
+            "note": "فیلترهای نوسان/قدرت روند محافظه‌کارانه و تجربی‌اند؛ مقادیر سرمایه، اندازه قرارداد، اهرم، کارمزد و اسلیپیج باید جداگانه لحاظ شوند."
         },
         "updated_at": utc_now()
     }
