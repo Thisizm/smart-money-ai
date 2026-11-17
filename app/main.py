@@ -845,10 +845,18 @@ def news(asset: str = "gold"):
 
 FRED_SERIES = {
     "DGS10": {"label": "بازده اوراق ۱۰ ساله آمریکا", "unit": "%"},
+    "DGS2": {"label": "بازده اوراق ۲ ساله آمریکا", "unit": "%"},
     "DFII10": {"label": "بازده واقعی اوراق ۱۰ ساله آمریکا", "unit": "%"},
+    "T10YIE": {"label": "انتظارات تورمی سربه‌سر ۱۰ ساله", "unit": "%"},
     "FEDFUNDS": {"label": "نرخ مؤثر فدرال رزرو", "unit": "%"},
     "CPIAUCSL": {"label": "شاخص قیمت مصرف‌کننده آمریکا", "unit": "index"},
-    "UNRATE": {"label": "نرخ بیکاری آمریکا", "unit": "%"}
+    "PCEPI": {"label": "شاخص قیمت مخارج مصرف شخصی PCE", "unit": "index"},
+    "UNRATE": {"label": "نرخ بیکاری آمریکا", "unit": "%"},
+    "PAYEMS": {"label": "اشتغال غیرکشاورزی آمریکا", "unit": "thousands"},
+    "DTWEXBGS": {"label": "شاخص گسترده وزنی دلار آمریکا (نه DXY)", "unit": "index"},
+    "VIXCLS": {"label": "شاخص نوسان VIX", "unit": "index"},
+    "WTISPLC": {"label": "قیمت نفت WTI", "unit": "USD/barrel"},
+    "BAMLH0A0HYM2": {"label": "اسپرد اوراق پربازده آمریکا", "unit": "%"}
 }
 
 
@@ -880,22 +888,26 @@ def macro():
             "available": False, "source": "FRED",
             "message": "برای دریافت شاخص‌های رسمی اقتصاد آمریکا، FRED_API_KEY را در Render تنظیم کن.",
             "indicators": [],
-            "not_connected": ["DXY", "COT positioning", "Gold ETF flows", "Silver ETF flows", "central-bank gold purchases"]
+            "not_connected": ["ICE DXY exact index", "COT positioning", "Gold ETF flows", "Silver ETF flows", "central-bank gold purchases"]
         }
     now = datetime.now(timezone.utc).timestamp()
     if MACRO_CACHE["data"] and now - MACRO_CACHE["at"] < 3600:
         return MACRO_CACHE["data"]
-    indicators = []
+    indicators_by_id = {}
     errors = []
-    for series_id in FRED_SERIES:
-        try:
-            indicators.append(fred_observation(series_id))
-        except Exception as exc:
-            errors.append(series_id + ": " + str(exc)[:100])
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        future_map = {pool.submit(fred_observation, series_id): series_id for series_id in FRED_SERIES}
+        for future in as_completed(future_map):
+            series_id = future_map[future]
+            try:
+                indicators_by_id[series_id] = future.result()
+            except Exception as exc:
+                errors.append(series_id + ": " + str(exc)[:100])
+    indicators = [indicators_by_id[key] for key in FRED_SERIES if key in indicators_by_id]
     result = {
         "available": bool(indicators), "source": "Federal Reserve Economic Data (FRED)",
         "indicators": indicators, "errors": errors,
-        "not_connected": ["DXY", "COT positioning", "Gold ETF flows", "Silver ETF flows", "central-bank gold purchases"],
+        "not_connected": ["ICE DXY exact index", "COT positioning", "Gold ETF flows", "Silver ETF flows", "central-bank gold purchases"],
         "updated_at": utc_now(),
         "note": "برخی شاخص‌ها با تأخیر منتشر می‌شوند؛ تاریخ هر مشاهده کنار مقدار آمده است."
     }
@@ -910,7 +922,7 @@ def market_context(asset: str = "gold"):
     macro_data = macro()
     news_data = news(asset)
     factors = [
-        {"factor": "دلار آمریکا (DXY)", "status": "نیازمند اتصال منبع داده اختصاصی", "impact": "معمولاً دلار قوی می‌تواند فشار بر فلزات ایجاد کند؛ رابطه قطعی نیست"},
+        {"factor": "دلار آمریکا", "status": "شاخص گسترده دلار FRED موجود است؛ جایگزین دقیق ICE DXY نیست" if any(x.get("series") == "DTWEXBGS" and x.get("available") for x in macro_data.get("indicators", [])) else "نیازمند منبع داده دلار", "impact": "دلار قوی می‌تواند بر فلزات و دارایی‌های ریسکی فشار وارد کند؛ رابطه قطعی نیست"},
         {"factor": "بازده واقعی اوراق", "status": "داده FRED موجود است" if any(x.get("series") == "DFII10" and x.get("available") for x in macro_data.get("indicators", [])) else "نیازمند FRED_API_KEY", "impact": "افزایش بازده واقعی معمولاً هزینه فرصت نگهداری طلا را بالا می‌برد"},
         {"factor": "نرخ بهره و تورم آمریکا", "status": "داده FRED موجود است" if macro_data.get("available") else "نیازمند FRED_API_KEY", "impact": "انتظارات سیاست پولی می‌تواند بر دلار و فلزات اثر بگذارد"},
         {"factor": "جنگ و تحریم‌ها", "status": "رصد تیترهای خبری فعال", "impact": "ممکن است تقاضای دارایی امن را تغییر دهد"},
