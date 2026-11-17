@@ -38,6 +38,9 @@ def _now():
 
 
 def _connect():
+    if DATABASE_URL:
+        import psycopg2
+        return _PostgresConnection(psycopg2.connect(DATABASE_URL, connect_timeout=15))
     con = sqlite3.connect(DB_PATH, timeout=20)
     con.row_factory = sqlite3.Row
     return con
@@ -45,46 +48,90 @@ def _connect():
 
 def init_paper_db():
     with _LOCK, _connect() as con:
-        con.execute("PRAGMA journal_mode=WAL")
-        con.execute("""
-        CREATE TABLE IF NOT EXISTS paper_trades (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fingerprint TEXT NOT NULL UNIQUE,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            market TEXT NOT NULL,
-            symbol TEXT NOT NULL,
-            timeframe TEXT NOT NULL,
-            side TEXT NOT NULL,
-            signal_candle_time INTEGER,
-            entry_price REAL NOT NULL,
-            entry_low REAL,
-            entry_high REAL,
-            signal_entry REAL,
-            last_quote_price REAL,
-            last_quote_at TEXT,
-            stop_loss REAL NOT NULL,
-            target_1 REAL NOT NULL,
-            target_2 REAL,
-            target_3 REAL,
-            status TEXT NOT NULL,
-            tp1_hit_at TEXT,
-            closed_at TEXT,
-            exit_price REAL,
-            exit_reason TEXT,
-            realized_r REAL NOT NULL DEFAULT 0,
-            realized_return_percent REAL NOT NULL DEFAULT 0,
-            source TEXT,
-            note TEXT,
-            quantity REAL NOT NULL DEFAULT 0,
-            notional REAL NOT NULL DEFAULT 0,
-            margin_used REAL NOT NULL DEFAULT 0,
-            leverage REAL NOT NULL DEFAULT 1,
-            initial_balance REAL NOT NULL DEFAULT 10000,
-            risk_cash REAL NOT NULL DEFAULT 50
-        )
-        """)
-        columns = {row["name"] for row in con.execute("PRAGMA table_info(paper_trades)")}
+        if not DATABASE_URL:
+            con.execute("PRAGMA journal_mode=WAL")
+        if DATABASE_URL:
+            con.execute("""
+            CREATE TABLE IF NOT EXISTS paper_trades (
+                id BIGSERIAL PRIMARY KEY,
+                fingerprint TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                market TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                side TEXT NOT NULL,
+                signal_candle_time BIGINT,
+                entry_price DOUBLE PRECISION NOT NULL,
+                entry_low DOUBLE PRECISION,
+                entry_high DOUBLE PRECISION,
+                signal_entry DOUBLE PRECISION,
+                last_quote_price DOUBLE PRECISION,
+                last_quote_at TEXT,
+                stop_loss DOUBLE PRECISION NOT NULL,
+                target_1 DOUBLE PRECISION NOT NULL,
+                target_2 DOUBLE PRECISION,
+                target_3 DOUBLE PRECISION,
+                status TEXT NOT NULL,
+                tp1_hit_at TEXT,
+                closed_at TEXT,
+                exit_price DOUBLE PRECISION,
+                exit_reason TEXT,
+                realized_r DOUBLE PRECISION NOT NULL DEFAULT 0,
+                realized_return_percent DOUBLE PRECISION NOT NULL DEFAULT 0,
+                source TEXT,
+                note TEXT,
+                quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+                notional DOUBLE PRECISION NOT NULL DEFAULT 0,
+                margin_used DOUBLE PRECISION NOT NULL DEFAULT 0,
+                leverage DOUBLE PRECISION NOT NULL DEFAULT 1,
+                initial_balance DOUBLE PRECISION NOT NULL DEFAULT 10000,
+                risk_cash DOUBLE PRECISION NOT NULL DEFAULT 50
+            )
+            """)
+            columns = {row["column_name"] for row in con.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='paper_trades'"
+            ).fetchall()}
+        else:
+            con.execute("""
+            CREATE TABLE IF NOT EXISTS paper_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fingerprint TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                market TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                side TEXT NOT NULL,
+                signal_candle_time INTEGER,
+                entry_price REAL NOT NULL,
+                entry_low REAL,
+                entry_high REAL,
+                signal_entry REAL,
+                last_quote_price REAL,
+                last_quote_at TEXT,
+                stop_loss REAL NOT NULL,
+                target_1 REAL NOT NULL,
+                target_2 REAL,
+                target_3 REAL,
+                status TEXT NOT NULL,
+                tp1_hit_at TEXT,
+                closed_at TEXT,
+                exit_price REAL,
+                exit_reason TEXT,
+                realized_r REAL NOT NULL DEFAULT 0,
+                realized_return_percent REAL NOT NULL DEFAULT 0,
+                source TEXT,
+                note TEXT,
+                quantity REAL NOT NULL DEFAULT 0,
+                notional REAL NOT NULL DEFAULT 0,
+                margin_used REAL NOT NULL DEFAULT 0,
+                leverage REAL NOT NULL DEFAULT 1,
+                initial_balance REAL NOT NULL DEFAULT 10000,
+                risk_cash REAL NOT NULL DEFAULT 50
+            )
+            """)
+            columns = {row["name"] for row in con.execute("PRAGMA table_info(paper_trades)")}
         for name in ("entry_low", "entry_high", "last_quote_price"):
             if name not in columns:
                 con.execute("ALTER TABLE paper_trades ADD COLUMN " + name + " REAL")
