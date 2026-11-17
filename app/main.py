@@ -739,6 +739,41 @@ def analyze(candles, market, symbol, timeframe):
     direction = "BUY" if bull >= 42 and bull - bear >= 8 and bull_confirmed else (
         "SELL" if bear >= 42 and bear - bull >= 8 and bear_confirmed else "WAIT"
     )
+    strategy_direction = direction
+    strategy_checks = []
+    if direction == "BUY":
+        strategy_checks = [
+            ("هم‌جهتی EMAها", e9 > e21 and e21 > e50),
+            ("ساختار صعودی", structure_trend == "bullish" or bos_up or choch_up),
+            ("نقدینگی یا FVG صعودی", sweep_low or bullish_fvg),
+            ("مومنتوم RSI", 50 <= rsi_value <= 72),
+            ("تأیید MACD", macd_bull),
+            ("حجم بالاتر از میانگین", volume_confirm)
+        ]
+    elif direction == "SELL":
+        strategy_checks = [
+            ("هم‌جهتی EMAها", e9 < e21 and e21 < e50),
+            ("ساختار نزولی", structure_trend == "bearish" or bos_down or choch_down),
+            ("نقدینگی یا FVG نزولی", sweep_high or bearish_fvg),
+            ("مومنتوم RSI", 28 <= rsi_value <= 50),
+            ("تأیید MACD", macd_bear),
+            ("حجم بالاتر از میانگین", volume_confirm)
+        ]
+    strategy_score = sum(1 for _, passed in strategy_checks if passed)
+    strategy_structure_ok = bool(strategy_checks and strategy_checks[1][1])
+    strategy_minimum = 3 if strategy_structure_ok else 4
+    strategy_gate_passed = direction == "WAIT" or strategy_score >= strategy_minimum
+    strategy_plan = {
+        "name": "روند + پولبک ساختاری (SMC)" if advanced["adx"]["regime"] == "trending" else "شکست/بازگشت ساختاری با تأیید مومنتوم",
+        "candidate_direction": strategy_direction,
+        "score": strategy_score,
+        "required_score": strategy_minimum,
+        "checks": [{"name": name, "passed": passed} for name, passed in strategy_checks],
+        "passed": strategy_gate_passed,
+        "decision": "اجازه بررسی ورود" if strategy_gate_passed and direction != "WAIT" else ("عدم ورود؛ تأییدهای کافی جمع نشده" if direction != "WAIT" else "فعلاً بدون ستاپ")
+    }
+    if direction != "WAIT" and not strategy_gate_passed:
+        direction = "WAIT"
     bias = "صعودی" if bull - bear >= 6 else "نزولی" if bear - bull >= 6 else "خنثی"
     setup_score = min(100, max(bull, bear))
     price = last["close"]
@@ -1100,7 +1135,7 @@ def analyze(candles, market, symbol, timeframe):
             "retest_time": retest_time,
             "touched_by_post_formation_closed_candle": bool(touched),
             "reaction_confirmed": bool(reaction), "reaction_body_ratio": round(body_ratio, 3),
-            "risk_gate_passed": not risk_blocked,
+            "risk_gate_passed": not risk_blocked and strategy_gate_passed,
             "invalidation_level": round(stop_price, 10),
             "confirmation": "ورود فقط پس از لمس ناحیه و کندل رد معتبر بسته‌شده با بدنه قوی و بسته‌شدن نزدیک انتهای کندل؛ ورود تریگر برابر بسته‌شدن همان کندل است.",
             "note": "حد ضرر پشت سوئینگ ساختاری است؛ هدف اول نقدینگی مخالف واقعی با حداقل ۱.۵R است. سطح انتظار، سفارش فعال نیست."
@@ -1159,6 +1194,7 @@ def analyze(candles, market, symbol, timeframe):
         "order_block_approx": order_block, "analysis": notes,
         "candles_count": len(candles), "last_candle_time": last["time"],
         "advanced_analysis": advanced,
+        "strategy_plan": strategy_plan,
         "risk_management": {
             "risk_per_trade_percent_reference": 0.5,
             "risk_budget_per_10000_account_value": 50.0,

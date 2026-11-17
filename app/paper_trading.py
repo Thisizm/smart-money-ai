@@ -202,12 +202,56 @@ def init_paper_db():
         con.execute("CREATE INDEX IF NOT EXISTS idx_paper_created ON paper_trades(created_at DESC)")
 
 
+def _portfolio_risk_state():
+    """Return conservative virtual-account limits before recording another paper entry."""
+    base = max(100.0, float(os.getenv("PAPER_INITIAL_BALANCE", "10000")))
+    risk_pct = min(1.0, max(0.1, float(os.getenv("PAPER_RISK_PERCENT", "0.5"))))
+    daily_limit_pct = min(5.0, max(0.5, float(os.getenv("PAPER_MAX_DAILY_LOSS_PERCENT", "2"))))
+    max_open = max(1, min(10, int(os.getenv("PAPER_MAX_OPEN_TRADES", "3"))))
+    portfolio_limit_pct = min(3.0, max(risk_pct, float(os.getenv("PAPER_MAX_PORTFOLIO_RISK_PERCENT", "1.5"))))
+    max_leverage = max(1.0, min(3.0, float(os.getenv("PAPER_MAX_LEVERAGE", "3"))))
+    day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    with _LOCK, _connect() as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT status, side, entry_price, last_quote_price, quantity, initial_balance, risk_cash, notional, realized_return_percent, updated_at FROM paper_trades"
+        ).fetchall()]
+    realized_total = sum((float(r.get("realized_return_percent") or 0) / 100.0) * float(r.get("notional") or 0) for r in rows)
+    daily_realized = sum(
+        (float(r.get("realized_return_percent") or 0) / 100.0) * float(r.get("notional") or 0)
+        for r in rows if str(r.get("updated_at") or "") >= day_start
+    )
+    floating = 0.0
+    open_rows = [r for r in rows if r.get("status") in ("PENDING_ENTRY", "ACTIVE", "TP1_HIT")]
+    risk_in_use = 0.0
+    for r in open_rows:
+        status = r.get("status")
+        if status == "PENDING_ENTRY":
+            risk_in_use += float(r.get("risk_cash") or 0)
+            continue
+        remaining = 0.5 if status == "TP1_HIT" else 1.0
+        risk_in_use += float(r.get("risk_cash") or 0) * remaining
+        entry, quote, qty = float(r.get("entry_price") or 0), float(r.get("last_quote_price") or r.get("entry_price") or 0), float(r.get("quantity") or 0)
+        sign = 1.0 if r.get("side") == "LONG" else -1.0
+        floating += sign * (quote - entry) * qty * remaining
+    equity = max(100.0, base + realized_total + floating)
+    daily_pnl = daily_realized
+    return {
+        "equity": equity, "risk_percent": risk_pct, "risk_cash": equity * risk_pct / 100.0,
+        "daily_pnl": daily_pnl, "daily_loss_limit_cash": equity * daily_limit_pct / 100.0,
+        "open_count": len(open_rows), "max_open": max_open,
+        "risk_in_use": risk_in_use, "portfolio_risk_limit_cash": equity * portfolio_limit_pct / 100.0,
+        "max_leverage": max_leverage
+    }
+
+
 def record_signal(result):
     """Create a pending simulated limit entry from the signal structural zone."""
     if not isinstance(result, dict) or result.get("signal") not in ("BUY", "SELL"):
         return {"recorded": False, "reason": "no_directional_signal"}
     if (result.get("risk_management") or {}).get("risk_gate_passed") is False:
         return {"recorded": False, "reason": "risk_gate_blocked"}
+    if (result.get("strategy_plan") or {}).get("passed") is False:
+        return {"recorded": False, "reason": "strategy_confluence_not_confirmed"}
     if (result.get("execution_quality") or {}).get("blocked"):
         return {"recorded": False, "reason": "execution_quality_blocked"}
     if (result.get("economic_event_risk") or {}).get("entry_blocked_by_calendar"):
@@ -250,13 +294,22 @@ def record_signal(result):
         return {"recorded": False, "reason": "invalid_long_levels"}
     if side == "SHORT" and (targets[0] >= entry or entry_high >= stop):
         return {"recorded": False, "reason": "invalid_short_levels"}
-    # Virtual account: 10,000 USDT-equivalent, 0.5% risk, auto leverage <= 5x.
-    # This sizing is simulation only; no exchange order is submitted.
-    initial_balance = float(os.getenv("PAPER_INITIAL_BALANCE", "10000"))
-    risk_cash = initial_balance * 0.005
+    # Virtual-account sizing: equity-adjusted fixed fractional risk plus portfolio/daily drawdown guards.
+    limits = _portfolio_risk_state()
+    initial_balance = limits["equity"]
+    risk_cash = limits["risk_cash"]
+    if limits["open_count"] >= limits["max_open"]:
+        return {"recorded": False, "reason": "portfolio_max_open_trades",
+                "risk_state": limits}
+    if limits["daily_pnl"] <= -limits["daily_loss_limit_cash"]:
+        return {"recorded": False, "reason": "daily_loss_limit_reached",
+                "risk_state": limits}
+    if limits["risk_in_use"] + risk_cash > limits["portfolio_risk_limit_cash"]:
+        return {"recorded": False, "reason": "portfolio_total_risk_limit",
+                "risk_state": limits}
     risk_per_unit = abs(entry - stop)
     quantity = risk_cash / risk_per_unit
-    max_leverage = max(1.0, min(5.0, float(os.getenv("PAPER_MAX_LEVERAGE", "5"))))
+    max_leverage = limits["max_leverage"]
     quantity = min(quantity, initial_balance * max_leverage / max(entry, 1e-12))
     notional = quantity * entry
     leverage = min(max_leverage, max(1.0, float(math.ceil(notional / initial_balance))))
@@ -277,7 +330,12 @@ def record_signal(result):
         if cur.rowcount == 0:
             row = con.execute("SELECT id, status FROM paper_trades WHERE fingerprint=?", (fingerprint,)).fetchone()
             return {"recorded": False, "duplicate": True, "trade_id": row["id"], "status": row["status"]}
-        return {"recorded": True, "trade_id": cur.lastrowid, "status": status, "entry_zone": [entry_low, entry_high], "entry_price": filled_entry if touched else None}
+        return {"recorded": True, "trade_id": cur.lastrowid, "status": status,
+                "entry_zone": [entry_low, entry_high], "entry_price": filled_entry if touched else None,
+                "position_size": quantity, "notional": notional, "margin_used": margin_used,
+                "risk_cash": risk_cash, "risk_percent": limits["risk_percent"],
+                "portfolio_risk_after_entry": limits["risk_in_use"] + risk_cash,
+                "equity": initial_balance}
 
 
 def monitor_open_trades(quote_getter):
@@ -322,7 +380,7 @@ def monitor_open_trades(quote_getter):
                         fill_risk = abs(fill_price - float(row["stop_loss"]))
                         balance = float(row["initial_balance"] or 10000)
                         risk_cash = float(row["risk_cash"] or balance * 0.005)
-                        max_lev = max(1.0, min(5.0, float(os.getenv("PAPER_MAX_LEVERAGE", "5"))))
+                        max_lev = max(1.0, min(3.0, float(os.getenv("PAPER_MAX_LEVERAGE", "3"))))
                         qty = min(risk_cash / max(fill_risk, 1e-12), balance * max_lev / max(fill_price, 1e-12))
                         notional = qty * fill_price
                         leverage = min(max_lev, max(1.0, float(math.ceil(notional / balance))))
