@@ -110,6 +110,15 @@ function renderSmartEntryChart(d,plan,side){
  if(typeof ResizeObserver!=="undefined"){smartEntryResizeObserver=new ResizeObserver(()=>{if(smartEntryChart&&el.clientWidth>0)smartEntryChart.applyOptions({width:el.clientWidth})});smartEntryResizeObserver.observe(el)}
 }
 
+function syncPaperEntryToggles(trades){
+ if(!currentAnalysisMarket||!currentAnalysisSymbol)return;
+ const rows=Array.isArray(trades)?trades:[];
+ const primary=rows.some(t=>t.status==="PENDING_ENTRY"&&t.market===currentAnalysisMarket&&t.symbol===currentAnalysisSymbol&&t.timeframe===(lastA?.timeframe||tf.value)&&t.source==="PRIMARY_ANALYSIS_ENTRY");
+ const smart=rows.some(t=>t.status==="PENDING_ENTRY"&&t.market===currentAnalysisMarket&&t.symbol===currentAnalysisSymbol&&t.timeframe===(lastA?.timeframe||tf.value)&&t.source==="SMART_ENTRY_STRUCTURAL_ZONE");
+ primaryPaperArmed=primary;smartPaperArmed=smart;
+ const a=document.getElementById("primary-paper-auto"),b=document.getElementById("smart-paper-auto");
+ if(a)a.checked=primary;if(b)b.checked=smart;
+}
 async function togglePaperEntry(source,enabled){
  const market=currentAnalysisMarket,symbol=currentAnalysisSymbol,timeframe=lastA?.timeframe||tf.value;
  const checkbox=document.getElementById(source==="primary"?"primary-paper-auto":"smart-paper-auto");
@@ -310,7 +319,7 @@ function showA(d){
 
  document.getElementById("prodetails").innerHTML=details.join("");
  document.getElementById("ares").hidden=false;
- renderChart(d);renderScenario(d);renderSmartEntry(d);
+ renderChart(d);renderScenario(d);renderSmartEntry(d);syncPaperEntryToggles(paperTradesCache);
 }
 async function analyze(){let s=document.getElementById("astatus"),m=market.value,x=symbol.value,t=tf.value;s.textContent="در حال دریافت داده…";await resetPaperEntryToggles();currentAnalysisMarket=m;currentAnalysisSymbol=x;try{let d=await get("/api/analyze?market="+m+"&symbol="+encodeURIComponent(x)+"&timeframe="+t);showA(d);let q=d.live_quote||{};s.textContent=q.available?"تحلیل کندل بسته‌شده | قیمت زنده: "+fmt(q.price)+" | "+q.source+" | تأخیر منبع: "+(q.age_seconds==null?"نامشخص":q.age_seconds+" ثانیه")+(q.is_proxy?" | قیمت آتی/Proxy":""):"تحلیل دریافت شد، اما قیمت زنده در دسترس نیست؛ قیمت کندل را قیمت لحظه‌ای فرض نکن."}catch(e){s.textContent="خطا در دریافت کندل‌های تحلیل: "+e.message;try{let qd=await get("/api/quote?market="+m+"&symbol="+encodeURIComponent(x)),q=qd.quote;if(q&&q.available){lastA={quote_only:true};document.getElementById("ares").hidden=false;document.getElementById("signal").textContent="قیمت اسپات دریافت شد؛ کندل تاریخی برای تحلیل در دسترس نیست";document.getElementById("signal").className="wait";document.getElementById("metrics").innerHTML=metric("قیمت اسپات",fmt(q.price))+metric("منبع قیمت",q.source)+metric("سن داده",q.age_seconds==null?"نامشخص":fmt(q.age_seconds)+" ثانیه");renderLiveQuote(q)}}catch(qe){}}}
 async function backtest(){
@@ -593,6 +602,7 @@ async function refreshPaperTrading(){
   const active=d.active_trades||[];
   const history=d.history_trades||[];
   paperTradesCache=active;
+  syncPaperEntryToggles(active);
   activeEl.innerHTML=active.length?active.map(t=>paperTradeCard(t,true)).join(""):'<div class="item">معامله فعالی وجود ندارد.</div>';
   historyEl.innerHTML=history.length?history.map(t=>paperTradeCard(t,false)).join(""):'<div class="item">هنوز معامله‌ای بسته یا لغو نشده است.</div>';
   statusEl.textContent="حساب مجازی: 10,000 | ریسک هر معامله: 0.5% | اهرم: 1x تا 5x | آخرین بررسی: "+new Date().toLocaleTimeString("fa-IR")+" | فقط آزمایشی";
