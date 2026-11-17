@@ -132,6 +132,11 @@ def validate_decision(result, live_quote=None, execution_quality=None):
         valid = stop < low and all(x > high for x in targets[:2]) and targets[0] < targets[1]
     if valid and decision == "SELL":
         valid = stop > high and all(x < low for x in targets[:2]) and targets[0] > targets[1]
+    if valid:
+        midpoint = (low + high) / 2.0
+        risk_distance = abs(midpoint - stop)
+        reward_distance = abs(targets[0] - midpoint)
+        valid = risk_distance > 0 and reward_distance / risk_distance >= 1.2
     if execution_quality and execution_quality.get("blocked"):
         valid = False
         result.setdefault("risk_flags", []).append("ورود به‌دلیل کیفیت قیمت یا اجرا مسدود است.")
