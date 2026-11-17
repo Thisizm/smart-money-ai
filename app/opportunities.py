@@ -307,6 +307,11 @@ def opportunity_asset(symbol: str, market: str = "crypto"):
     plan_short = smart.get("short") or {}
     long_zone = plan_long.get("zone") if plan_long.get("available") else None
     short_zone = plan_short.get("zone") if plan_short.get("available") else None
+    reference_price = float(live_price if live_price is not None else daily.get("price") or 0)
+    def target_returns(values, reference):
+        if reference <= 0:
+            return []
+        return [round((float(value) / reference - 1) * 100, 2) for value in values]
     long_scenario = scenarios.get("bullish") or {}
     short_scenario = scenarios.get("bearish") or {}
 
@@ -335,6 +340,13 @@ def opportunity_asset(symbol: str, market: str = "crypto"):
         "short_entry_zone": zone_text(short_zone),
         "long_targets": targets_text(structural_long),
         "short_targets": targets_text(structural_short),
+        "long_target_returns_percent": target_returns(structural_long, reference_price),
+        "short_target_returns_percent": target_returns(structural_short, reference_price),
+        "reference_price_for_targets": reference_price,
+        "long_stop_loss": plan_long.get("stop_loss"),
+        "short_stop_loss": plan_short.get("stop_loss"),
+        "long_invalidation": plan_long.get("invalidation_level") or plan_long.get("stop_loss"),
+        "short_invalidation": plan_short.get("invalidation_level") or plan_short.get("stop_loss"),
         "bullish_breakout": long_scenario,
         "bearish_breakdown": short_scenario,
         "invalidation_note": "سناریوی خرید در صورت بسته‌شدن و تثبیت زیر حد ضرر/ابطال ساختاری پلن خرید نیازمند بازبینی است؛ سناریوی فروش با تثبیت بالای حد ابطال فروش. سطوح دقیق فقط در صورت وجود پلن معتبر نمایش داده می‌شوند.",
