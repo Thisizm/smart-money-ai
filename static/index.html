@@ -15,7 +15,7 @@
 const coins=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","AVAXUSDT","LTCUSDT","TRXUSDT","DOTUSDT","BCHUSDT","NEARUSDT","UNIUSDT","SUIUSDT","TONUSDT","ETCUSDT","APTUSDT","ARBUSDT"];let lastA=null,lastC=null;
 document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll("main section").forEach(s=>s.hidden=true);document.getElementById(b.dataset.id).hidden=false});
 function symbols(){let m=document.getElementById("market").value,a=m==="crypto"?coins:[m==="gold"?"XAU/USD":"XAG/USD"];document.getElementById("symbol").innerHTML=a.map(x=>'<option>'+x+'</option>').join("")}
-function fmt(v){return v==null?"—":Number(v).toLocaleString("en-US",{maximumFractionDigits:6})}
+function fmt(v){return v==null?"—":(typeof v==="number"?v.toLocaleString("en-US",{maximumFractionDigits:6}):String(v))}
 async function get(url,opt){let r=await fetch(url,opt),d=await r.json();if(!r.ok)throw Error(d.detail||"خطا");return d}
 function metric(k,v){return '<div class="metric"><span class="muted">'+k+'</span><br><b>'+v+'</b></div>'}
 function showA(d){
