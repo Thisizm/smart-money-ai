@@ -446,8 +446,8 @@ def analyze(candles, market, symbol, timeframe):
     bull_confirmed = bull_structure_ok or bull_momentum_checks >= 3
     bear_confirmed = bear_structure_ok or bear_momentum_checks >= 3
 
-    direction = "BUY" if bull >= 48 and bull - bear >= 10 and bull_confirmed else (
-        "SELL" if bear >= 48 and bear - bull >= 10 and bear_confirmed else "WAIT"
+    direction = "BUY" if bull >= 42 and bull - bear >= 8 and bull_confirmed else (
+        "SELL" if bear >= 42 and bear - bull >= 8 and bear_confirmed else "WAIT"
     )
     bias = "صعودی" if bull - bear >= 6 else "نزولی" if bear - bull >= 6 else "خنثی"
     setup_score = min(100, max(bull, bear))
@@ -504,10 +504,10 @@ def analyze(candles, market, symbol, timeframe):
 
     wait_reasons = []
     if direction == "WAIT":
-        if max(bull, bear) < 48:
-            wait_reasons.append("امتیاز هم‌جهتی به حداقل ۴۸ نرسیده")
-        if abs(bull - bear) < 10:
-            wait_reasons.append("برتری خریدار یا فروشنده به‌اندازه کافی واضح نیست")
+        if max(bull, bear) < 42:
+            wait_reasons.append("امتیاز هم‌جهتی به حداقل ۴۲ نرسیده")
+        if abs(bull - bear) < 8:
+            wait_reasons.append("اختلاف امتیاز خریدار و فروشنده کمتر از ۸ است")
         if bull - bear >= 10 and not bull_confirmed:
             wait_reasons.append("تأیید کافی برای ورود خرید وجود ندارد")
         if bear - bull >= 10 and not bear_confirmed:
