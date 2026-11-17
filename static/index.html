@@ -40,7 +40,7 @@ function showA(d){
  const fib=a.fibonacci||{};
  details.push('<div class="item">فیبوناچی '+(fib.available?fib.leg:"")+' — 38.2%: '+(fib.available?fmt(fib["0.382"]):"—")+' | 50%: '+(fib.available?fmt(fib["0.5"]):"—")+' | 61.8%: '+(fib.available?fmt(fib["0.618"]):"—")+'</div>');
  const ses=a.session_levels||{};
- details.push('<div class="item">سطوح روز UTC — سقف: '+fmt(ses.current_high)+' | کف: '+fmt(ses.current_low)+' | پیوت: '+fmt(ses.classic_pivot)+' | حمایت: '+fmt(ses.support_1)+' | مقاومت: '+fmt(ses.resistance_1)+'</div>');
+ details.push('<div class="item">سطوح UTC/کندل قبلی — سقف: '+fmt(ses.current_high)+' | کف: '+fmt(ses.current_low)+' | پیوت: '+fmt(ses.classic_pivot)+' | حمایت: '+fmt(ses.support_1)+' | مقاومت: '+fmt(ses.resistance_1)+'</div>');
  details.push('<div class="item">الگوهای کندلی: '+((a.candle_patterns||[]).join("، ")||"الگوی مشخصی ثبت نشد")+' | فشردگی بولینگر: '+(v.squeeze?"بله":"خیر")+'</div>');
  details.push("<h3>مشتقات و دفتر سفارش کریپتو</h3>");
  details.push('<div class="item">Funding: '+(der.funding_rate_percent==null?"ناموجود":fmt(der.funding_rate_percent)+"%")+' | Open Interest: '+fmt(der.open_interest_contracts)+' | نسبت لانگ/شورت حساب‌ها: '+fmt(der.long_short_account_ratio)+'</div>');
