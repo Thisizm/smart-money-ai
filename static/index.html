@@ -51,7 +51,7 @@ function renderDivergences(d){
 function renderScenario(d){
  const el=document.getElementById("scenario-analysis"),p=d.trade_plan||{},a=d.scenario_analysis||{};
  if(d.signal==="BUY"||d.signal==="SELL"){
-  el.textContent=(d.signal==="BUY"?"سیگنال خرید":"سیگنال فروش")+"؛ ورود مرجع: "+fmt(p.entry??d.entry_price)+" | حد ضرر: "+fmt(p.stop_loss??d.stop_loss)+" | هدف اول: "+fmt((p.targets||[])[0]??d.take_profit_1);
+  el.textContent=(d.signal==="BUY"?"سیگنال خرید":"سیگنال فروش")+"؛ قیمت پیشنهادی ورود: "+fmt(p.entry??d.entry_price)+" | حد ضرر: "+fmt(p.stop_loss??d.stop_loss)+" | هدف اول: "+fmt((p.targets||[])[0]??d.take_profit_1);
  }else{
   el.textContent="فعلاً سیگنال قطعی وجود ندارد. "+(a.location||"برای ورود منتظر تأیید بمان.");
  }
@@ -67,7 +67,7 @@ function renderSmartEntryChart(d,plan,side){
  const lines=[];
  const add=(value,color,title)=>{if(value==null||!Number.isFinite(Number(value)))return;cs.createPriceLine({price:Number(value),color,lineWidth:2,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title});lines.push('<span class="legend-chip" style="border-color:'+color+'">'+title+' '+fmt(Number(value))+'</span>')};
  add(plan.zone?.low,"#38bdf8","کف ناحیه");add(plan.zone?.high,"#38bdf8","سقف ناحیه");
- add(plan.entry,"#facc15",plan.status==="CONFIRMED_ON_CLOSED_CANDLE"?"تریگر":"ورود مرجع");
+ add(plan.entry,"#facc15",plan.status==="CONFIRMED_ON_CLOSED_CANDLE"?"قیمت فعال‌شدن":"قیمت پیشنهادی ورود");
  add(plan.stop_loss,"#fb7185","حد ضرر");
  (plan.targets||[]).forEach((x,i)=>add(x,"#4ade80","هدف "+(i+1)));
  const q=d.live_quote||{};if(q.available)add(q.price,"#7dd3fc","قیمت زنده");
@@ -93,8 +93,8 @@ function renderSmartEntry(d){
   "صرف لمس ناحیه کافی نیست؛ تا بسته‌شدن کندل رد معتبر، ورود فعال نیست.";
  el.innerHTML='<b>'+stateTitle+'</b>'+
   '<div class="smart-summary">جهت: '+side+'<br>محدوده ناحیه: '+fmt(plan.zone.low)+' تا '+fmt(plan.zone.high)+
-  '<br>'+(ready?'قیمت تریگر: ':'ورود مرجع (غیرفعال): ')+fmt(plan.entry)+
-  '<br>حد ابطال ساختاری: '+fmt(plan.stop_loss)+'<br>هدف نقدینگی اول: '+fmt((plan.targets||[])[0])+'</div>'+
+  '<br>'+(ready?'قیمت فعال‌شدن ورود: ':'قیمت پیشنهادی ورود (هنوز فعال نیست): ')+fmt(plan.entry)+
+  '<br>قیمت بی‌اعتبارشدن معامله: '+fmt(plan.stop_loss)+'<br>هدف نقدینگی اول: '+fmt((plan.targets||[])[0])+'</div>'+
   '<div class="small">'+stateNote+'</div>';
 }
 function renderChart(d){
