@@ -35,7 +35,7 @@ A research dashboard for crypto, gold and silver. The application is a decision-
 | FRED_API_KEY | Optional key for macro series |
 | OPENAI_API_KEY or AI_API_KEY | Optional AI synthesis; API usage may be billed |
 | AI_MODEL | Optional OpenAI Responses API model ID; default is gemini-2.5-flash (OpenAI fallback uses gpt-4.1-mini) |
-| GEMINI_API_KEY | Optional Google AI Studio key for Gemini free-tier synthesis |
+| GEMINI_API_KEY | Google AI Studio key for Gemini free-tier primary AI decision engine and synthesis |\n| GEMINI_MODEL | Optional Gemini model ID; default `gemini-2.5-flash` |
 | HISTORICAL_CANDLE_LIMIT | Binance Spot candle history target; default 1,500, max 3,000 |
 | BACKTEST_CANDLE_LIMIT | Production-engine backtest replay bars; default 500, max 1,000 |
 | SCANNER_MIN_QUOTE_VOLUME_USDT | Scanner minimum 24h quote volume; default 5,000,000 USDT |
@@ -65,7 +65,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - /api/correlations
 - /api/cot?asset=gold
 - /api/market-context?asset=gold
-- /api/ai-synthesis (POST)
+- /api/ai-synthesis (POST) — legacy text synthesis\n- /api/ai-decision (POST) — Gemini primary decision engine; gathers the selected analysis, all six timeframes, macro/news/COT, crypto dominance, cross-asset correlations and economic calendar, then validates any directional trade plan before returning it.
 
 ## Tests
 
@@ -74,4 +74,4 @@ python -m compileall -q app
 python -m unittest discover -s tests -v
 ```
 
-Live trading is disabled. No real orders are placed.
+The Gemini primary decision engine is analysis-only and does not create paper or live trades. It requires `GEMINI_API_KEY`; free-tier quotas are project-specific and can be exhausted. It does not silently fall back to a paid provider.\n\nLive trading is disabled. No real orders are placed.
