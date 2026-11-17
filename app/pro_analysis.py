@@ -262,6 +262,7 @@ def advanced_analysis(candles, timeframe):
     session = _session_levels(candles)
     candle_age = max(0, int(datetime.now(timezone.utc).timestamp() * 1000 - last["time"]))
     volume_available = any(v > 0 for v in volumes[-30:])
+    source_symbols = sorted({c.get("source_symbol") for c in candles if c.get("source_symbol")})
 
     return {
         "rsi_wilder_14": round(rsi, 2),
@@ -275,7 +276,7 @@ def advanced_analysis(candles, timeframe):
         "fibonacci": fib,
         "volume_profile": volume_profile,
         "session_levels": session,
-        "data_quality": {"closed_candle_analysis": True, "candles_used": len(candles), "last_candle_time_ms": last["time"], "last_candle_age_seconds": candle_age // 1000, "volume_available": volume_available, "timeframe": timeframe},
+        "data_quality": {"closed_candle_analysis": True, "candles_used": len(candles), "last_candle_time_ms": last["time"], "last_candle_age_seconds": candle_age // 1000, "volume_available": volume_available, "timeframe": timeframe, "source_symbols": source_symbols},
         "risk_template": {"default_risk_percent": 0.5, "risk_budget_per_10000_account_value": 50.0, "position_size_formula": "risk_budget / abs(entry - stop_loss)", "note": "فرمول آموزشی است؛ ضریب قرارداد، اهرم، کارمزد، اسلیپیج و موجودی واقعی باید جداگانه لحاظ شوند."},
         "methodology_note": "ADX/RSI و VWAP/پروفایل بر اساس OHLCV عمومی محاسبه می‌شوند؛ حجم پروفایل تقریبی است و داده تیک، دفتر سفارش تاریخی یا جریان سفارش نهادی نیست."
     }
