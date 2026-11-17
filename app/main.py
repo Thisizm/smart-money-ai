@@ -1523,6 +1523,25 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
         result["external_confirmation"] = get_marginpad_screener_confirmation(symbol)
     else:
         result["external_confirmation"] = {"available": False, "source": "MarginPad", "note": "اسکنر مشتقات MarginPad فقط برای کریپتو است."}
+
+    # Macro/news/COT and dominance are contextual risk inputs. A single headline
+    # or one dominance snapshot is never converted into a directional signal.
+    try:
+        intelligence_context = market_context(market)
+    except Exception as exc:
+        intelligence_context = {"available": False, "error": str(exc)[:160]}
+    dominance_data = {"available": False, "note": "برای فلزات کاربرد ندارد."}
+    if market == "crypto":
+        try:
+            dominance_data = dominance()
+        except Exception as exc:
+            dominance_data = {"available": False, "error": str(exc)[:160]}
+    intelligence = assess_hidden_intelligence(
+        market, result, result.get("derivatives"), dominance_data,
+        intelligence_context, result.get("economic_event_risk")
+    )
+    apply_intelligence_gate(result, intelligence)
+
     chart_limit = max(300, min(int(os.getenv("CHART_CANDLE_LIMIT", "1500")), 3000))
     chart_bars = completed_candles(candles, timeframe)[-chart_limit:]
     result["chart_candles"] = [{
@@ -1571,7 +1590,7 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             "shape": "circle",
             "text": "واگرایی " + ("صعودی" if bullish_div else "نزولی")
         })
-        # Paper trades are recorded only after all API-level intelligence and execution gates.
+        result["paper_trade"] = record_signal(result)
     return result
 
 
