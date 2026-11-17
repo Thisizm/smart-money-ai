@@ -1,70 +1,29 @@
-
 <!doctype html>
-<html lang="fa" dir="rtl">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Smart Money AI</title>
+<html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Smart Money AI</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#0c1220;color:#edf2ff;font-family:Tahoma,Arial,sans-serif}
-header{padding:20px 16px;background:#121c30;border-bottom:1px solid #26334b}h1{font-size:21px;margin:0 0 7px}
-small,.muted{color:#9eabc2}.wrap{max-width:900px;margin:auto;padding:16px}.panel{background:#141f33;border:1px solid #293955;border-radius:14px;padding:15px;margin-bottom:14px}
-.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}label{font-size:13px;color:#b9c6da;display:block;margin-bottom:6px}
-select,button{width:100%;padding:12px;border-radius:9px;border:1px solid #40516e;background:#0d1728;color:#fff;font-size:14px}
-button{background:#2563eb;border:0;font-weight:bold;margin-top:12px;cursor:pointer}.result{font-size:23px;font-weight:bold;margin:10px 0}
-.buy{color:#42d392}.sell{color:#ff7373}.wait{color:#f3c969}.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.level{background:#0c1729;padding:10px;border-radius:9px}.level b{display:block;margin-top:6px;overflow-wrap:anywhere}
-ul{padding-right:20px;line-height:2}.foot{font-size:12px;line-height:1.9;color:#9eabc2}
-@media(max-width:520px){.grid{grid-template-columns:1fr}.levels{grid-template-columns:1fr}}
-</style></head>
-<body>
-<header><div class="wrap"><h1>SMART MONEY AI</h1><small>داشبورد آزمایشی تحلیل کریپتو، فارکس و طلا</small></div></header>
+*{box-sizing:border-box}body{margin:0;background:#0a1020;color:#e8eefb;font-family:Tahoma,Arial}header,.panel{background:#121d32;border:1px solid #293a59;border-radius:13px;padding:14px;margin:12px}header{border-radius:0;margin:0}h1{font-size:21px}.wrap{max-width:1000px;margin:auto;padding:10px}.tabs,.row{display:flex;gap:8px;flex-wrap:wrap}.tabs{overflow:auto}.tab{width:auto}button,select{background:#0b1629;border:1px solid #405477;color:white;border-radius:9px;padding:11px}button{background:#285bd0;cursor:pointer}.field{flex:1;min-width:120px}label{display:block;font-size:12px;color:#aebbd0;margin-bottom:6px}select{width:100%}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.metric{background:#0b172a;padding:10px;border-radius:9px;overflow-wrap:anywhere}.muted,.small{color:#9cabc5;font-size:12px;line-height:1.8}.buy{color:#46d39a}.sell{color:#ff7a85}.wait{color:#f0c66a}.item{border-top:1px solid #273653;padding:10px 0;font-size:13px;line-height:1.8}.item a{color:#9fc2ff}pre{white-space:pre-wrap;font-family:Tahoma;line-height:1.9}section[hidden]{display:none}@media(max-width:600px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style></head><body><header><div class="wrap"><h1>SMART MONEY AI</h1><div class="muted">تحلیل کریپتو، طلا و نقره | نسخه آزمایشی توسعه‌یافته</div></div></header>
 <main class="wrap">
-<div class="panel">
- <div class="grid">
-  <div><label>بازار</label><select id="market" onchange="updateSymbols()"><option value="crypto">ارز دیجیتال</option><option value="forex">فارکس</option><option value="gold">طلا</option></select></div>
-  <div><label>نماد</label><select id="symbol"></select></div>
-  <div><label>تایم‌فریم</label><select id="tf"><option value="5m">۵ دقیقه</option><option value="15m" selected>۱۵ دقیقه</option><option value="1h">۱ ساعت</option><option value="4h">۴ ساعت</option><option value="1d">روزانه</option><option value="1w">هفتگی</option></select></div>
- </div>
- <button onclick="runAnalysis()">تحلیل بازار</button>
- <div id="status" class="muted" style="margin-top:12px">برای شروع، بازار و نماد را انتخاب کن.</div>
-</div>
-<div id="result" class="panel" style="display:none">
- <div class="muted" id="caption"></div><div class="result" id="signal"></div>
- <div class="levels">
-  <div class="level">قیمت فعلی<b id="price">—</b></div>
-  <div class="level">حد ضرر<b id="sl">—</b></div>
-  <div class="level">هدف اول<b id="tp1">—</b></div>
- </div>
- <div class="level" style="margin-top:8px">هدف دوم<b id="tp2">—</b></div>
- <h3>دلایل تحلیل</h3><ul id="notes"></ul>
- <p class="muted" id="extra"></p>
-</div>
-<div class="panel"><b>وضعیت سرویس</b><p id="health" class="muted">در حال بررسی…</p></div>
-<div class="panel foot">این ابزار نسخه آزمایشی است. تشخیص BOS و FVG در این نسخه الگوریتمی و ساده است و دید واقعی سفارش‌های مؤسسات یا Order Book اختصاصی را نشان نمی‌دهد. سیگنال‌ها توصیه مالی نیستند؛ پیش از هر معامله، داده و حد ضرر را بررسی و ابتدا روی حساب آزمایشی تست کن. داده‌های بازار ممکن است محدود، با تأخیر یا در پلن رایگان غیرقابل‌دسترس باشند.</div>
-</main>
+<div class="tabs"><button class="tab" data-id="analysis">تحلیل</button><button class="tab" data-id="dominance">دامیننس</button><button class="tab" data-id="context">اخبار و اقتصاد</button><button class="tab" data-id="scanner">اسکنر</button><button class="tab" data-id="ai">AI</button></div>
+<section id="analysis"><div class="panel"><div class="row"><div class="field"><label>بازار</label><select id="market" onchange="symbols()"><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div><div class="field"><label>نماد</label><select id="symbol"></select></div><div class="field"><label>تایم‌فریم</label><select id="tf"><option>5m</option><option selected>15m</option><option>1h</option><option>4h</option><option>1d</option><option>1w</option></select></div></div><div class="row" style="margin-top:10px"><button onclick="analyze()">تحلیل تکنیکال</button><button onclick="mtf()">چندتایم‌فریمی</button></div><div id="astatus" class="muted"></div></div><div id="ares" class="panel" hidden><h3 id="signal"></h3><div id="metrics" class="metrics"></div><ul id="reasons"></ul><div id="mtfout"></div><p class="small">امتیاز تجربی احتمال موفقیت نیست. BOS/FVG/Order Block در این نسخه با قواعد کندلی تقریبی محاسبه می‌شوند.</p></div></section>
+<section id="dominance" hidden><div class="panel"><h3>دامیننس بازار</h3><button onclick="dominance()">به‌روزرسانی</button><div id="dstatus" class="muted"></div><div id="dmetrics" class="metrics"></div></div></section>
+<section id="context" hidden><div class="panel"><h3>اخبار و عوامل اثرگذار</h3><div class="row"><div class="field"><label>دارایی</label><select id="asset"><option value="gold">طلا</option><option value="silver">نقره</option><option value="crypto">کریپتو</option></select></div><button onclick="context()">دریافت اخبار و اقتصاد</button></div><div id="cstatus" class="muted"></div><div id="factors"></div><h3>اخبار</h3><div id="news"></div><h3>شاخص‌های اقتصاد آمریکا</h3><div id="macro"></div></div></section>
+<section id="scanner" hidden><div class="panel"><h3>اسکنر بازار</h3><div class="row"><div class="field"><label>بازار</label><select id="sm"><option value="all">همه</option><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div><div class="field"><label>تایم‌فریم</label><select id="st"><option>15m</option><option>1h</option><option>4h</option><option>1d</option></select></div></div><button onclick="scanner()" style="margin-top:10px">شروع اسکن</button><div id="sstatus" class="muted"></div><div id="sresults"></div></div></section>
+<section id="ai" hidden><div class="panel"><h3>جمع‌بندی هوش مصنوعی</h3><p class="small">ابتدا تحلیل تکنیکال یا خبرها را دریافت کن. نیازمند AI_API_KEY در Render است و استفاده از API ممکن است هزینه داشته باشد.</p><button onclick="ai()">ساخت جمع‌بندی</button><div id="aistatus" class="muted"></div><pre id="aiout"></pre></div></section>
+<div class="panel"><b>وضعیت منابع</b><div id="providers" class="small">در حال بررسی…</div></div><div class="panel small">معامله خودکار خاموش است و سفارش واقعی ثبت نمی‌شود. کلیدهای API را فقط در Environment Variables در Render وارد کن، نه در چت یا کد عمومی. هیچ سیستم معاملاتی سود تضمینی ندارد.</div></main>
 <script>
-const symbols={crypto:["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT"],forex:["EUR/USD","GBP/USD","USD/JPY","AUD/USD","USD/CHF","USD/CAD"],gold:["XAU/USD"]};
-function updateSymbols(){let m=document.getElementById('market').value,s=document.getElementById('symbol');s.innerHTML='';symbols[m].forEach(x=>{let o=document.createElement('option');o.value=x;o.textContent=x;s.appendChild(o)});}
-function fmt(v){if(v===null||v===undefined)return '—';return Number(v).toLocaleString('en-US',{maximumFractionDigits:6});}
-async function runAnalysis(){
- let m=document.getElementById('market').value,s=document.getElementById('symbol').value,t=document.getElementById('tf').value;
- let st=document.getElementById('status');st.textContent='در حال دریافت داده و تحلیل…';
- try{
-  let r=await fetch(`/api/analyze?market=${encodeURIComponent(m)}&symbol=${encodeURIComponent(s)}&timeframe=${encodeURIComponent(t)}`);
-  let d=await r.json();if(!r.ok)throw new Error(d.detail||'خطا در تحلیل');
-  document.getElementById('result').style.display='block';
-  document.getElementById('caption').textContent=`${d.symbol} | ${t} | امتیاز ${d.score} از ۵`;
-  let sig=document.getElementById('signal');sig.textContent=d.signal==='BUY'?'سیگنال خرید — '+d.bias:d.signal==='SELL'?'سیگنال فروش — '+d.bias:'انتظار — '+d.bias;
-  sig.className='result '+(d.signal==='BUY'?'buy':d.signal==='SELL'?'sell':'wait');
-  document.getElementById('price').textContent=fmt(d.price);
-  document.getElementById('sl').textContent=fmt(d.stop_loss);
-  document.getElementById('tp1').textContent=fmt(d.take_profit_1);
-  document.getElementById('tp2').textContent=fmt(d.take_profit_2);
-  document.getElementById('notes').innerHTML=d.analysis.map(x=>`<li>${x}</li>`).join('');
-  document.getElementById('extra').textContent=`تعداد کندل بررسی‌شده: ${d.candles_count}. این نتیجه فقط بر اساس داده دریافتی و قواعد ساده این نسخه است.`;
-  st.textContent='تحلیل انجام شد؛ زمان: '+new Date().toLocaleTimeString();
- }catch(e){st.textContent='خطا: '+e.message;document.getElementById('result').style.display='none';}
-}
-async function check(){try{let r=await fetch('/api/status');let d=await r.json();document.getElementById('health').textContent='سرور آنلاین | کلید Twelve Data: '+(d.twelve_data_key_configured?'تنظیم شده':'تنظیم نشده')+' | داده عمومی کریپتو فعال است.';}catch(e){document.getElementById('health').textContent='ارتباط با سرور برقرار نشد.';}}
-updateSymbols();check();
+const coins=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","AVAXUSDT","LTCUSDT","TRXUSDT","DOTUSDT","BCHUSDT","NEARUSDT","UNIUSDT","SUIUSDT","TONUSDT","ETCUSDT","APTUSDT","ARBUSDT"];let lastA=null,lastC=null;
+document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll("main section").forEach(s=>s.hidden=true);document.getElementById(b.dataset.id).hidden=false});
+function symbols(){let m=document.getElementById("market").value,a=m==="crypto"?coins:[m==="gold"?"XAU/USD":"XAG/USD"];document.getElementById("symbol").innerHTML=a.map(x=>'<option>'+x+'</option>').join("")}
+function fmt(v){return v==null?"—":Number(v).toLocaleString("en-US",{maximumFractionDigits:6})}
+async function get(url,opt){let r=await fetch(url,opt),d=await r.json();if(!r.ok)throw Error(d.detail||"خطا");return d}
+function metric(k,v){return '<div class="metric"><span class="muted">'+k+'</span><br><b>'+v+'</b></div>'}
+function showA(d){lastA=d;let e=document.getElementById("signal");e.textContent=d.signal+" — "+d.bias;e.className=d.signal==="BUY"?"buy":d.signal==="SELL"?"sell":"wait";document.getElementById("metrics").innerHTML=metric("قیمت",fmt(d.price))+metric("حد ضرر",fmt(d.stop_loss))+metric("هدف ۱",fmt(d.take_profit_1))+metric("هدف ۲",fmt(d.take_profit_2))+metric("امتیاز",d.setup_score+"/100")+metric("BOS",d.bos)+metric("CHOCH",d.choch)+metric("FVG",d.fvg);document.getElementById("reasons").innerHTML=d.analysis.map(x=>"<li>"+x+"</li>").join("");document.getElementById("ares").hidden=false}
+async function analyze(){let s=document.getElementById("astatus");s.textContent="در حال دریافت داده…";try{let m=market.value,x=symbol.value,t=tf.value;showA(await get("/api/analyze?market="+m+"&symbol="+encodeURIComponent(x)+"&timeframe="+t));s.textContent="تحلیل دریافت شد"}catch(e){s.textContent="خطا: "+e.message}}
+async function mtf(){try{let d=await get("/api/multi-timeframe?market="+market.value+"&symbol="+encodeURIComponent(symbol.value));document.getElementById("mtfout").innerHTML="<h3>نتیجه چندتایم‌فریمی: "+d.overall+"</h3>"+d.timeframes.map(x=>'<div class="item">'+x.timeframe+": "+(x.signal||x.error)+"</div>").join("")}catch(e){astatus.textContent="خطا: "+e.message}}
+async function dominance(){dstatus.textContent="در حال دریافت…";try{let d=await get("/api/dominance");dmetrics.innerHTML=metric("BTC.D",fmt(d.btc)+"%")+metric("ETH.D",fmt(d.eth)+"%")+metric("USDT.D",fmt(d.usdt)+"%")+metric("Others",fmt(d.others_ex_btc_eth_usdt)+"%")+metric("ارزش بازار",fmt(d.total_market_cap_usd)+" USD");dstatus.textContent="منبع: "+d.source+" | "+d.updated_at}catch(e){dstatus.textContent="خطا: "+e.message}}
+async function context(){cstatus.textContent="در حال دریافت…";try{let d=await get("/api/market-context?asset="+asset.value);lastC=d;factors.innerHTML=d.factors.map(x=>'<div class="item"><b>'+x.factor+'</b><br>'+x.impact+'<br><span class="muted">'+x.status+'</span></div>').join("");news.innerHTML=d.news.articles.map(x=>'<div class="item"><a target="_blank" rel="noopener" href="'+x.url+'">'+x.title+'</a><br><span class="muted">'+x.source+" | "+(x.published||"")+'</span><br>'+x.tags.join("، ")+"</div>").join("")||"خبری دریافت نشد";macro.innerHTML=(d.macro.indicators||[]).map(x=>'<div class="item">'+(x.label||x.series)+": "+(x.value??"ناموجود")+" "+(x.unit||"")+" | "+(x.date||"")+"</div>").join("")||d.macro.message;cstatus.textContent="منبع خبر: "+d.news.source}catch(e){cstatus.textContent="خطا: "+e.message}}
+async function scanner(){sstatus.textContent="در حال اسکن…";try{let d=await get("/api/scanner?market="+sm.value+"&timeframe="+st.value+"&limit=10");sresults.innerHTML=d.results.map(x=>'<div class="item"><b>'+x.symbol+"</b> — "+x.signal+" | "+(x.setup_score||"")+"<br>"+(x.error||"قیمت: "+fmt(x.price))+"</div>").join("");sstatus.textContent="اسکن تمام شد"}catch(e){sstatus.textContent="خطا: "+e.message}}
+async function ai(){aistatus.textContent="در حال پردازش…";if(!lastA&&!lastC){aistatus.textContent="اول تحلیل یا خبرها را دریافت کن";return}try{let d=await get("/api/ai-synthesis",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({technical:lastA,market_context:lastC})});aiout.textContent=d.analysis;aistatus.textContent="آماده شد"}catch(e){aistatus.textContent="خطا: "+e.message}}
+async function status(){try{let d=await get("/api/status");providers.textContent=Object.entries(d.providers).map(x=>x[0]+": "+x[1]).join(" | ")+" | معاملات واقعی: خاموش"}catch(e){providers.textContent="خطای اتصال: "+e.message}}symbols();status();
 </script></body></html>
