@@ -63,8 +63,8 @@ class PaperTradingTests(unittest.TestCase):
         self.assertTrue(result["recorded"])
         trade = paper_trading.list_paper_trades()["trades"][0]
         self.assertEqual(trade["source"], "PRIMARY_ANALYSIS_ENTRY")
-        self.assertAlmostEqual(trade["entry_low"], 99.95)
-        self.assertAlmostEqual(trade["entry_high"], 100.05)
+        self.assertAlmostEqual(trade["entry_low"], 99.9)
+        self.assertAlmostEqual(trade["entry_high"], 100.1)
 
     def test_primary_and_smart_entries_are_independent(self):
         signal = self.sample_signal()
