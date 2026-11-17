@@ -38,6 +38,8 @@ def init_paper_db():
             side TEXT NOT NULL,
             signal_candle_time INTEGER,
             entry_price REAL NOT NULL,
+            entry_low REAL,
+            entry_high REAL,
             signal_entry REAL,
             stop_loss REAL NOT NULL,
             target_1 REAL NOT NULL,
@@ -54,12 +56,16 @@ def init_paper_db():
             note TEXT
         )
         """)
+        columns = {row["name"] for row in con.execute("PRAGMA table_info(paper_trades)")}
+        for name in ("entry_low", "entry_high"):
+            if name not in columns:
+                con.execute("ALTER TABLE paper_trades ADD COLUMN " + name + " REAL")
         con.execute("CREATE INDEX IF NOT EXISTS idx_paper_status ON paper_trades(status)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_paper_created ON paper_trades(created_at DESC)")
 
 
 def record_signal(result):
-    """Open a simulated position only for a fresh, executable BUY/SELL signal."""
+    """Create a pending simulated limit entry from the signal structural zone."""
     if not isinstance(result, dict) or result.get("signal") not in ("BUY", "SELL"):
         return {"recorded": False, "reason": "no_directional_signal"}
     if (result.get("risk_management") or {}).get("risk_gate_passed") is False:
@@ -68,68 +74,67 @@ def record_signal(result):
         return {"recorded": False, "reason": "execution_quality_blocked"}
     if (result.get("economic_event_risk") or {}).get("entry_blocked_by_calendar"):
         return {"recorded": False, "reason": "economic_calendar_blocked"}
-
     quote = result.get("live_quote") or {}
+    market = result.get("market", "crypto")
     if not quote.get("available") or quote.get("is_proxy"):
         return {"recorded": False, "reason": "fresh_non_proxy_quote_required"}
     age = quote.get("age_seconds")
-    market = result.get("market", "crypto")
     if age is None or age > (60 if market == "crypto" else 900):
         return {"recorded": False, "reason": "stale_quote"}
+    side = "LONG" if result["signal"] == "BUY" else "SHORT"
+    smart = result.get("smart_entry") or {}
+    smart_plan = smart.get("long" if side == "LONG" else "short") or {}
+    base_plan = result.get("trade_plan") or {}
     try:
-        live_entry = float(quote["price"])
-        signal_entry = float(result.get("entry_price") or (result.get("trade_plan") or {}).get("entry"))
-        stop = float((result.get("trade_plan") or {})["stop_loss"])
-        targets = [float(x) for x in (result.get("trade_plan") or {}).get("targets", [])]
+        live_price = float(quote["price"])
+        zone = smart_plan.get("zone") if smart_plan.get("available") else None
+        if zone and zone.get("low") is not None and zone.get("high") is not None:
+            entry_low, entry_high = sorted((float(zone["low"]), float(zone["high"])))
+            entry = float(smart_plan.get("entry_reference") or ((entry_low + entry_high) / 2))
+            stop = float(smart_plan["stop_loss"])
+            targets = [float(x) for x in smart_plan.get("targets", [])]
+            source = "SMART_ENTRY_STRUCTURAL_ZONE"
+        else:
+            entry = float(base_plan.get("entry") or result.get("entry_price"))
+            tolerance = max(abs(entry) * 0.0005, float(result.get("atr") or 0) * 0.05)
+            entry_low, entry_high = entry - tolerance, entry + tolerance
+            stop = float(base_plan["stop_loss"])
+            targets = [float(x) for x in base_plan.get("targets", [])]
+            source = "SIGNAL_ENTRY_LEVEL"
         if len(targets) < 2:
             raise ValueError("two_targets_required")
     except (TypeError, ValueError, KeyError):
-        return {"recorded": False, "reason": "incomplete_trade_plan"}
-
-    side = "LONG" if result["signal"] == "BUY" else "SHORT"
-    risk = live_entry - stop if side == "LONG" else stop - live_entry
+        return {"recorded": False, "reason": "no_valid_entry_zone_or_trade_levels"}
+    risk = entry - stop if side == "LONG" else stop - entry
     if risk <= 0:
-        return {"recorded": False, "reason": "live_price_beyond_stop"}
-    atr = float(result.get("atr") or 0)
-    max_drift = max(atr * 0.35, abs(signal_entry) * 0.001)
-    if abs(live_entry - signal_entry) > max_drift:
-        return {"recorded": False, "reason": "price_drifted_from_signal"}
-    if side == "LONG" and (targets[0] <= live_entry or live_entry <= stop):
+        return {"recorded": False, "reason": "invalid_structural_stop"}
+    if side == "LONG" and (targets[0] <= entry or entry_low <= stop):
         return {"recorded": False, "reason": "invalid_long_levels"}
-    if side == "SHORT" and (targets[0] >= live_entry or live_entry >= stop):
+    if side == "SHORT" and (targets[0] >= entry or entry_high >= stop):
         return {"recorded": False, "reason": "invalid_short_levels"}
-
+    touched = entry_low <= live_price <= entry_high
+    status = "ACTIVE" if touched else "PENDING_ENTRY"
+    filled_entry = live_price if touched else entry
     candle_time = result.get("last_candle_time")
-    fingerprint = "|".join(str(x) for x in (
-        market, result.get("symbol", ""), result.get("timeframe", ""),
-        candle_time or result.get("updated_at", ""), result["signal"]
-    ))
+    fingerprint = "|".join(str(x) for x in (market, result.get("symbol", ""), result.get("timeframe", ""), candle_time or result.get("updated_at", ""), result["signal"]))
     now = _now()
-    note = "ورود آزمایشی با قیمت زنده هنگام صدور سیگنال؛ بدون سفارش واقعی."
+    note = "ورود آزمایشی؛ قیمت داخل محدوده بود." if touched else "سفارش شرطی آزمایشی؛ با رسیدن قیمت به محدوده ورود فعال می‌شود."
     with _LOCK, _connect() as con:
         cur = con.execute("""
             INSERT OR IGNORE INTO paper_trades
-            (fingerprint, created_at, updated_at, market, symbol, timeframe, side,
-             signal_candle_time, entry_price, signal_entry, stop_loss, target_1,
-             target_2, target_3, status, source, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
-        """, (
-            fingerprint, now, now, market, result.get("symbol", ""),
-            result.get("timeframe", ""), side, candle_time, live_entry,
-            signal_entry, stop, targets[0], targets[1],
-            targets[2] if len(targets) > 2 else None,
-            quote.get("source"), note
-        ))
+            (fingerprint, created_at, updated_at, market, symbol, timeframe, side, signal_candle_time, entry_price, entry_low, entry_high, signal_entry, stop_loss, target_1, target_2, target_3, status, source, note)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (fingerprint, now, now, market, result.get("symbol", ""), result.get("timeframe", ""), side, candle_time, filled_entry, entry_low, entry_high, entry, stop, targets[0], targets[1], targets[2] if len(targets) > 2 else None, status, source, note))
         if cur.rowcount == 0:
             row = con.execute("SELECT id, status FROM paper_trades WHERE fingerprint=?", (fingerprint,)).fetchone()
             return {"recorded": False, "duplicate": True, "trade_id": row["id"], "status": row["status"]}
-        return {"recorded": True, "trade_id": cur.lastrowid, "status": "ACTIVE", "entry_price": live_entry}
+        return {"recorded": True, "trade_id": cur.lastrowid, "status": status, "entry_zone": [entry_low, entry_high], "entry_price": filled_entry if touched else None}
 
 
 def monitor_open_trades(quote_getter):
     """Update open paper trades from fresh quotes; partial close 50% at TP1, rest at TP2."""
     with _LOCK, _connect() as con:
-        rows = con.execute("SELECT * FROM paper_trades WHERE status IN ('ACTIVE','TP1_HIT') ORDER BY id").fetchall()
+        rows = con.execute("SELECT * FROM paper_trades WHERE status IN ('PENDING_ENTRY','ACTIVE','TP1_HIT') ORDER BY id").fetchall()
     updated = 0
     for row in rows:
         try:
@@ -141,6 +146,21 @@ def monitor_open_trades(quote_getter):
                 continue
             price = float(quote["price"])
             side = row["side"]
+            if row["status"] == "PENDING_ENTRY":
+                low = float(row["entry_low"] if row["entry_low"] is not None else row["entry_price"])
+                high = float(row["entry_high"] if row["entry_high"] is not None else row["entry_price"])
+                stop_pending = float(row["stop_loss"])
+                stop_crossed = price <= stop_pending if side == "LONG" else price >= stop_pending
+                if stop_crossed:
+                    with _LOCK, _connect() as con:
+                        con.execute("UPDATE paper_trades SET status='INVALIDATED_BEFORE_ENTRY', updated_at=?, closed_at=?, exit_price=?, exit_reason='STOP_CROSSED_BEFORE_ENTRY' WHERE id=?", (_now(), _now(), price, row["id"]))
+                    updated += 1
+                    continue
+                if low <= price <= high:
+                    with _LOCK, _connect() as con:
+                        con.execute("UPDATE paper_trades SET status='ACTIVE', entry_price=?, updated_at=?, note=? WHERE id=?", (price, _now(), "قیمت وارد محدوده شد؛ معامله آزمایشی فعال شد.", row["id"]))
+                    updated += 1
+                continue
             stop = float(row["stop_loss"])
             tp1 = float(row["target_1"])
             tp2 = float(row["target_2"]) if row["target_2"] is not None else None
@@ -230,6 +250,7 @@ def list_paper_trades(limit=100):
         "available": True, "mode": "PAPER_ONLY",
         "stats": {
             "total": int(stats["total"] or 0), "active": int(stats["active"] or 0),
+            "pending_entry": sum(1 for row in rows if row["status"] == "PENDING_ENTRY"),
             "tp1_touched": int(stats["tp1_touched"] or 0), "tp2": int(stats["tp2"] or 0),
             "stopped": int(stats["stopped"] or 0), "closed": len(closed_r),
             "win_rate_percent": round(wins / len(closed_r) * 100, 2) if closed_r else None,
