@@ -14,6 +14,8 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from .pro_analysis import advanced_analysis
+
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(APP_DIR)
 DB_PATH = os.getenv("DATABASE_PATH", os.path.join(ROOT_DIR, "alerts.db"))
@@ -285,31 +287,39 @@ def ema(values, period):
     return value
 
 
-def analyze(candles, market, symbol, timeframe):
-    if len(candles) < 60:
-        raise HTTPException(502, "برای تحلیل معتبرتر حداقل ۶۰ کندل لازم است")
+TIMEFRAME_MILLISECONDS = {
+    "5m": 5 * 60 * 1000, "15m": 15 * 60 * 1000,
+    "1h": 60 * 60 * 1000, "4h": 4 * 60 * 60 * 1000,
+    "1d": 24 * 60 * 60 * 1000, "1w": 7 * 24 * 60 * 60 * 1000
+}
 
+
+def completed_candles(candles, timeframe):
+    """Exclude the currently forming bar to reduce repainting and look-ahead errors."""
+    interval = TIMEFRAME_MILLISECONDS.get(timeframe)
+    if interval and len(candles) > 1:
+        last_open_ms = int(candles[-1]["time"])
+        if int(time.time() * 1000) < last_open_ms + interval:
+            return candles[:-1]
+    return candles
+
+
+def analyze(candles, market, symbol, timeframe):
+    candles = completed_candles(candles, timeframe)
+    if len(candles) < 60:
+        raise HTTPException(502, "برای تحلیل معتبرتر حداقل ۶۰ کندل بسته‌شده لازم است")
+
+    advanced = advanced_analysis(candles, timeframe)
     closes = [c["close"] for c in candles]
     last = candles[-1]
     previous = candles[-2]
     e9, e21, e50 = ema(closes, 9), ema(closes, 21), ema(closes, 50)
 
-    # RSI(14), calculated from the latest 14 price changes.
-    changes = [closes[i] - closes[i - 1] for i in range(max(1, len(closes) - 14), len(closes))]
-    gains = [max(change, 0) for change in changes]
-    losses = [max(-change, 0) for change in changes]
-    avg_gain = sum(gains) / max(1, len(gains))
-    avg_loss = sum(losses) / max(1, len(losses))
-    if avg_loss == 0:
-        rsi_value = 100.0 if avg_gain > 0 else 50.0
-    else:
-        rs = avg_gain / avg_loss
-        rsi_value = 100 - (100 / (1 + rs))
-
-    macd_now = ema(closes, 12) - ema(closes, 26)
-    macd_previous = ema(closes[:-1], 12) - ema(closes[:-1], 26)
-    macd_bull = macd_now > 0 and macd_now >= macd_previous
-    macd_bear = macd_now < 0 and macd_now <= macd_previous
+    # Wilder-smoothed RSI and MACD line/signal histogram from the advanced engine.
+    rsi_value = advanced["rsi_wilder_14"]
+    macd_data = advanced["macd"]
+    macd_bull = macd_data["line"] > 0 and macd_data["histogram"] > 0
+    macd_bear = macd_data["line"] < 0 and macd_data["histogram"] < 0
     momentum_up = last["close"] > candles[-4]["close"]
     momentum_down = last["close"] < candles[-4]["close"]
 
@@ -322,7 +332,7 @@ def analyze(candles, market, symbol, timeframe):
             abs(current["high"] - prior["close"]),
             abs(current["low"] - prior["close"])
         ))
-    atr = sum(trs[-14:]) / max(1, len(trs[-14:]))
+    atr = advanced["volatility"]["atr"]
 
     # Confirmed swing points: two candles on each side.
     pivot_highs, pivot_lows = [], []
@@ -429,6 +439,9 @@ def analyze(candles, market, symbol, timeframe):
     bear += 6 if macd_bear else 0
     bull += 4 if momentum_up else 0
     bear += 4 if momentum_down else 0
+    adx_data = advanced["adx"]
+    bull += 4 if adx_data["value"] >= 20 and adx_data["plus_di"] > adx_data["minus_di"] else 0
+    bear += 4 if adx_data["value"] >= 20 and adx_data["minus_di"] > adx_data["plus_di"] else 0
     bull += 4 if volume_confirm and last["close"] >= previous["close"] else 0
     bear += 4 if volume_confirm and last["close"] <= previous["close"] else 0
 
@@ -454,12 +467,16 @@ def analyze(candles, market, symbol, timeframe):
     price = last["close"]
 
     if direction == "BUY":
-        stop = min(swing_low, price - 1.5 * atr)
-        risk = max(price - stop, atr)
+        structural_gap = price - swing_low
+        buffer = max(atr * 0.20, price * 0.0005)
+        stop = swing_low - buffer if 0 < structural_gap <= 3 * atr else price - 1.5 * atr
+        risk = max(price - stop, atr * 0.5)
         targets = [price + risk * r for r in (1.5, 2.5, 3.5)]
     elif direction == "SELL":
-        stop = max(swing_high, price + 1.5 * atr)
-        risk = max(stop - price, atr)
+        structural_gap = swing_high - price
+        buffer = max(atr * 0.20, price * 0.0005)
+        stop = swing_high + buffer if 0 < structural_gap <= 3 * atr else price + 1.5 * atr
+        risk = max(stop - price, atr * 0.5)
         targets = [price - risk * r for r in (1.5, 2.5, 3.5)]
     else:
         stop, targets, risk = None, [None, None, None], None
@@ -533,6 +550,14 @@ def analyze(candles, market, symbol, timeframe):
         "fvg_zone": bullish_fvg_zone or bearish_fvg_zone,
         "order_block_approx": order_block, "analysis": notes,
         "candles_count": len(candles), "last_candle_time": last["time"],
+        "advanced_analysis": advanced,
+        "risk_management": {
+            "risk_per_trade_percent_reference": 0.5,
+            "risk_budget_per_10000_account_value": 50.0,
+            "position_size_formula": "risk_budget / abs(entry - stop_loss)",
+            "max_daily_loss_reference_percent": 2.0,
+            "note": "مقادیر صرفاً الگوی مدیریت ریسک هستند؛ اندازه قرارداد، اهرم، کارمزد، اسلیپیج و سرمایه واقعی باید لحاظ شوند."
+        },
         "updated_at": utc_now()
     }
 @app.get("/", response_class=HTMLResponse)
@@ -555,6 +580,7 @@ def status():
         "forex_enabled": False,
         "providers": {
             "crypto_prices": "Binance public market data",
+            "crypto_derivatives": "Binance public futures funding/OI/long-short + spot order-book snapshot",
             "metals_prices": ("Twelve Data primary + Yahoo Finance fallback" if TWELVE_DATA_API_KEY else "Yahoo Finance public fallback; Twelve Data key optional"),
             "crypto_dominance": "CoinGecko " + ("key_configured" if COINGECKO_API_KEY else "public_endpoint_attempt"),
             "global_news": "GDELT DOC 2.0",
@@ -577,10 +603,79 @@ def options():
     }
 
 
+DERIVATIVES_CACHE = {}
+
+
+def get_crypto_derivatives(symbol):
+    now = time.time()
+    cached = DERIVATIVES_CACHE.get(symbol)
+    if cached and now - cached["at"] < 30:
+        return cached["data"]
+
+    base = urllib.parse.quote(symbol, safe="")
+    urls = {
+        "funding": "https://fapi.binance.com/fapi/v1/fundingRate?symbol=" + base + "&limit=1",
+        "open_interest": "https://fapi.binance.com/fapi/v1/openInterest?symbol=" + base,
+        "long_short": "https://futures-data.binance.com/futures/data/globalLongShortAccountRatio?symbol=" + base + "&period=1h&limit=1",
+        "taker_ratio": "https://futures-data.binance.com/futures/data/takerlongshortRatio?symbol=" + base + "&period=1h&limit=1",
+        "order_book": "https://data-api.binance.vision/api/v3/depth?symbol=" + base + "&limit=20"
+    }
+    values, errors = {}, []
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = {pool.submit(fetch_json, url, None, 7): key for key, url in urls.items()}
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                values[key] = future.result()
+            except Exception as exc:
+                errors.append(key + ": " + str(exc)[:100])
+
+    funding_rows = values.get("funding") or []
+    funding = float(funding_rows[-1]["fundingRate"]) if funding_rows else None
+    oi_data = values.get("open_interest") or {}
+    long_rows = values.get("long_short") or []
+    taker_rows = values.get("taker_ratio") or []
+    depth = values.get("order_book") or {}
+    bids, asks = depth.get("bids", []), depth.get("asks", [])
+    bid_qty = sum(float(row[1]) for row in bids) if bids else 0.0
+    ask_qty = sum(float(row[1]) for row in asks) if asks else 0.0
+    total_qty = bid_qty + ask_qty
+    imbalance = (bid_qty - ask_qty) / total_qty if total_qty > 0 else None
+    spread_bps = None
+    if bids and asks:
+        bid, ask = float(bids[0][0]), float(asks[0][0])
+        mid = (bid + ask) / 2.0
+        spread_bps = ((ask - bid) / mid * 10000.0) if mid else None
+
+    result = {
+        "available": bool(values),
+        "source": "Binance public USD-M futures metrics + spot order-book snapshot",
+        "funding_rate": funding,
+        "funding_rate_percent": funding * 100 if funding is not None else None,
+        "open_interest_contracts": float(oi_data["openInterest"]) if oi_data.get("openInterest") is not None else None,
+        "long_short_account_ratio": float(long_rows[-1]["longShortRatio"]) if long_rows else None,
+        "taker_buy_sell_ratio": float(taker_rows[-1]["buySellRatio"]) if taker_rows else None,
+        "spot_orderbook_imbalance_top20": imbalance,
+        "spot_spread_basis_points": spread_bps,
+        "errors": errors,
+        "note": "فاندینگ و OI مشتقات عمومی‌اند؛ نسبت لانگ/شورت تعداد حساب‌هاست. دفتر سفارش فقط snapshot اسپات است، نه جریان سفارش تاریخی یا سفارش نهادی."
+    }
+    DERIVATIVES_CACHE[symbol] = {"at": now, "data": result}
+    return result
+
+
 @app.get("/api/analyze")
 def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str = "15m"):
     candles = get_candles(market, symbol, timeframe)
-    return analyze(candles, market, symbol, timeframe)
+    result = analyze(candles, market, symbol, timeframe)
+    if market == "crypto":
+        result["derivatives"] = get_crypto_derivatives(symbol)
+    else:
+        result["derivatives"] = {
+            "available": False,
+            "note": "منبع عمومی فعلی برای مشتقات و دفتر سفارش طلا/نقره به این برنامه متصل نیست."
+        }
+    return result
 
 
 @app.get("/api/multi-timeframe")
