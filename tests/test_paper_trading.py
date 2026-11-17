@@ -74,6 +74,14 @@ class PaperTradingTests(unittest.TestCase):
         self.assertTrue(primary["recorded"])
         self.assertEqual(paper_trading.list_paper_trades()["stats"]["pending_entry"], 2)
 
+    def test_canceled_entry_can_be_armed_again(self):
+        first = paper_trading.record_signal(self.sample_signal(), entry_mode="primary")
+        self.assertTrue(first["recorded"])
+        self.assertTrue(paper_trading.close_paper_trade(first["trade_id"])["closed"])
+        second = paper_trading.record_signal(self.sample_signal(), entry_mode="primary")
+        self.assertTrue(second["recorded"])
+        self.assertNotEqual(first["trade_id"], second["trade_id"])
+
     def test_smart_entry_structural_zone_is_the_recorded_entry(self):
         result = paper_trading.record_signal(self.sample_signal())
         self.assertTrue(result["recorded"])
