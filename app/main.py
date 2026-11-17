@@ -88,6 +88,47 @@ MARGINPAD_LOCK = threading.Lock()
 ECONOMIC_CALENDAR_CACHE = {"at": 0.0, "data": None}
 MARGINPAD_SCREENER_CACHE = {"at": 0.0, "data": None}
 
+# Live progress for the main technical-analysis request (in-memory, per process).
+ANALYSIS_PROGRESS = {}
+ANALYSIS_PROGRESS_LOCK = threading.Lock()
+
+
+def _set_analysis_progress(request_id, stage, detail, done=False):
+    if not request_id:
+        return
+    now = time.time()
+    with ANALYSIS_PROGRESS_LOCK:
+        previous = ANALYSIS_PROGRESS.get(request_id, {})
+        timings = dict(previous.get("timings") or {})
+        if previous.get("stage") and previous.get("stage_started_at"):
+            timings[previous["stage"]] = round(
+                (now - previous["stage_started_at"]) * 1000
+            )
+        ANALYSIS_PROGRESS[request_id] = {
+            "request_id": request_id, "stage": stage, "detail": detail,
+            "stage_started_at": now, "updated_at": now,
+            "started_at": previous.get("started_at", now),
+            "timings": timings, "done": bool(done)
+        }
+        if len(ANALYSIS_PROGRESS) > 150:
+            oldest = sorted(ANALYSIS_PROGRESS.items(), key=lambda item: item[1].get("updated_at", 0))
+            for old_id, _ in oldest[:len(ANALYSIS_PROGRESS) - 120]:
+                ANALYSIS_PROGRESS.pop(old_id, None)
+
+
+@app.get("/api/analyze-progress")
+def api_analyze_progress(request_id: str):
+    with ANALYSIS_PROGRESS_LOCK:
+        state = ANALYSIS_PROGRESS.get(request_id)
+        if not state:
+            return {"available": False, "stage": "starting", "detail": "در حال آماده‌سازی درخواست…"}
+        now = time.time()
+        result = dict(state)
+        result["timings"] = dict(state.get("timings") or {})
+        result["stage_elapsed_ms"] = round((now - state.get("stage_started_at", now)) * 1000)
+        result["total_elapsed_ms"] = round((now - state.get("started_at", now)) * 1000)
+        return {"available": True, **result}
+
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
@@ -1430,12 +1471,17 @@ def get_crypto_derivatives(symbol):
 
 
 @app.get("/api/analyze")
-def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str = "15m"):
+def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str = "15m", request_id: str = ""):
+    analysis_started = time.perf_counter()
+    _set_analysis_progress(request_id, "candles", "دریافت کندل‌های تاریخی از Binance یا Twelve Data و بررسی تعداد/منبع داده")
     candles = get_candles(market, symbol, timeframe)
+    _set_analysis_progress(request_id, "technical_core", "محاسبه ساختار بازار، BOS/CHOCH، نقدینگی، FVG، Order Block و اندیکاتورها")
     result = analyze(candles, market, symbol, timeframe)
+    _set_analysis_progress(request_id, "live_quote", "گرفتن قیمت زنده و بررسی تازگی قیمت و اسپرد")
     result["analysis_price"] = result.get("price")
     result["candle_source"] = (candles[-1].get("source") if candles else None) or ("Binance Spot" if market == "crypto" else "Twelve Data / Yahoo Finance metals fallback")
     result["live_quote"] = get_live_quote(market, symbol)
+    _set_analysis_progress(request_id, "derivatives", "دریافت Funding، Open Interest، نسبت خریدار/فروشنده و دفتر سفارش Binance (فقط کریپتو)")
     quote = result["live_quote"]
     smart = result.get("smart_entry") or {}
     for side in ("long", "short"):
@@ -1486,6 +1532,7 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
                                 "risk_reward": [], "entry_basis": "سناریوی ترجیحی با عبور قیمت زنده از حد ابطال باطل شده است."}
         result.setdefault("wait_reason", []).append("سناریوی ورود قبلی با شکست حد ابطال ساختاری باطل شد؛ تحلیل تازه لازم است.")
     result["smart_entry"] = smart
+    _set_analysis_progress(request_id, "risk_calendar", "بررسی ریسک رویدادهای اقتصادی و محدودیت‌های ورود")
     if market == "crypto":
         # Skip the hard-to-read third-party heatmap fetch. Keep observable Binance
         # derivatives metrics as the source for positioning context.
@@ -1560,6 +1607,7 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             if isinstance(smart.get(side), dict) and smart[side].get("available"):
                 smart[side]["status"] = "BLOCKED_BY_ECONOMIC_CALENDAR"
         result["smart_entry"] = smart
+    _set_analysis_progress(request_id, "external_screener", "دریافت تأیید مستقل اسکنر بازار؛ ممکن است منبع بیرونی کند باشد")
     if market == "crypto":
         result["external_confirmation"] = get_marginpad_screener_confirmation(symbol)
     else:
@@ -1567,10 +1615,12 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
 
     # Macro/news/COT and dominance are contextual risk inputs. A single headline
     # or one dominance snapshot is never converted into a directional signal.
+    _set_analysis_progress(request_id, "macro_news_cot", "دریافت اخبار، داده‌های اقتصاد کلان و COT برای فلزات")
     try:
         intelligence_context = market_context(market)
     except Exception as exc:
         intelligence_context = {"available": False, "error": str(exc)[:160]}
+    _set_analysis_progress(request_id, "dominance", "دریافت دامیننس رمزارزها (برای طلا و نقره کاربرد ندارد)")
     dominance_data = {"available": False, "note": "برای فلزات کاربرد ندارد."}
     if market == "crypto":
         try:
@@ -1583,6 +1633,7 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     )
     apply_intelligence_gate(result, intelligence)
 
+    _set_analysis_progress(request_id, "chart_build", "آماده‌سازی کندل‌های نمودار، RSI و علامت‌های سیگنال")
     chart_limit = max(300, min(int(os.getenv("CHART_CANDLE_LIMIT", "1500")), 3000))
     chart_bars = completed_candles(candles, timeframe)[-chart_limit:]
     result["chart_candles"] = [{
@@ -1632,6 +1683,8 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             "text": "واگرایی " + ("صعودی" if bullish_div else "نزولی")
         })
     result["paper_trade"] = {"recorded": False, "reason": "manual_activation_required"}
+    result["analysis_performance_ms"] = round((time.perf_counter() - analysis_started) * 1000)
+    _set_analysis_progress(request_id, "completed", "تحلیل تکنیکال کامل شد", done=True)
     return result
 
 
