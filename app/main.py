@@ -23,6 +23,7 @@ ROOT_DIR = os.path.dirname(APP_DIR)
 DB_PATH = os.getenv("DATABASE_PATH", os.path.join(ROOT_DIR, "alerts.db"))
 
 TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
+ALLOW_METAL_FUTURES_PROXY = os.getenv("ALLOW_METAL_FUTURES_PROXY", "false").lower() in ("1", "true", "yes")
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "")
 FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 AI_API_KEY = os.getenv("AI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
@@ -130,12 +131,13 @@ def aggregate_candles(candles, timeframe):
 
 def get_yahoo_metals_candles(market, timeframe):
     """No-key fallback: try spot symbols first, then exchange-traded futures."""
-    tickers = {
-        "gold": ["XAUUSD=X", "GC=F"],
-        "silver": ["XAGUSD=X", "SI=F"],
-    }.get(market)
+    spot_tickers = {"gold": ["XAUUSD=X"], "silver": ["XAGUSD=X"]}
+    futures_tickers = {"gold": ["GC=F"], "silver": ["SI=F"]}
+    tickers = spot_tickers.get(market)
     if not tickers:
         raise RuntimeError("Unsupported metal market")
+    if ALLOW_METAL_FUTURES_PROXY:
+        tickers = tickers + futures_tickers[market]
 
     settings = {
         "5m": ("5m", "5d", False),
@@ -286,10 +288,9 @@ def get_live_quote(market, symbol):
                 errors.append("Twelve Data quote: " + str(exc)[:140])
 
         if result is None:
-            tickers = {
-                "gold": ["XAUUSD=X", "GC=F"],
-                "silver": ["XAGUSD=X", "SI=F"]
-            }[market]
+            tickers = {"gold": ["XAUUSD=X"], "silver": ["XAGUSD=X"]}[market]
+            if ALLOW_METAL_FUTURES_PROXY:
+                tickers += {"gold": ["GC=F"], "silver": ["SI=F"]}[market]
             for ticker in tickers:
                 try:
                     params = urllib.parse.urlencode({"range": "1d", "interval": "1m", "events": "history"})
@@ -370,7 +371,7 @@ def get_candles(market, symbol, timeframe):
                 502,
                 "دریافت قیمت " + ("طلا" if market == "gold" else "نقره") +
                 " از منابع عمومی ناموفق بود. " + " | ".join(provider_errors) +
-                ". در صورت تداوم خطا می‌توانی TWELVE_DATA_API_KEY را در Render اضافه کنی."
+                ". برای قیمت اسپات دقیق، TWELVE_DATA_API_KEY با دسترسی مناسب را در Render تنظیم کن؛ قرارداد آتی به‌صورت پیش‌فرض جایگزین اسپات نمی‌شود."
             )
 
     raise HTTPException(400, "فقط کریپتو، طلا و نقره پشتیبانی می‌شوند")
@@ -749,7 +750,8 @@ def status():
         "providers": {
             "crypto_prices": "Binance Spot live ticker + Binance closed OHLCV candles",
             "crypto_derivatives": "Binance public futures funding/OI/long-short + spot order-book snapshot",
-            "metals_prices": ("Twelve Data Quote + OHLCV; Yahoo Finance fallback" if TWELVE_DATA_API_KEY else "Yahoo Finance quote/ohlcv fallback; delayed feed and futures proxy possible"),
+            "metals_prices": ("Twelve Data Quote + OHLCV; Yahoo spot fallback" if TWELVE_DATA_API_KEY else "Yahoo spot-only fallback; real-time access depends on provider plan"),
+            "metal_futures_proxy": "enabled" if ALLOW_METAL_FUTURES_PROXY else "disabled to avoid mixing futures with spot XAU/USD and XAG/USD",
             "crypto_dominance": "CoinGecko global endpoint with source timestamp" + ("; API key configured" if COINGECKO_API_KEY else "; public endpoint"),
             "global_news": "GDELT DOC 2.0",
             "macro_indicators": "FRED " + ("configured" if FRED_API_KEY else "key_required"),
