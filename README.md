@@ -18,7 +18,7 @@ A research dashboard for crypto, gold and silver. The application is a decision-
 ## Data sources and limitations
 
 - Crypto candles: Binance public market data.
-- Gold/silver candles: Twelve Data when configured, otherwise Yahoo Finance fallback. Yahoo futures fallbacks (GC=F, SI=F) are proxies, not exact spot prices.
+- Gold/silver candles and quotes: Twelve Data when configured, otherwise Yahoo Finance spot symbols. Yahoo futures proxies (GC=F, SI=F) are disabled by default to avoid silently mixing futures with spot; enable only with ALLOW_METAL_FUTURES_PROXY=true. Real-time access depends on the provider's market-data entitlement.
 - Crypto derivatives: Binance public USD-M Futures data plus a spot order-book snapshot. The order book is not historical institutional order flow.
 - Macro: FRED. Some releases are monthly or delayed. The broad trade-weighted USD index is not the ICE DXY index.
 - COT: CFTC weekly positioning. Positions are reported for Tuesday and are generally published Friday; they are not intraday signals.
@@ -34,7 +34,8 @@ A research dashboard for crypto, gold and silver. The application is a decision-
 | FRED_API_KEY | Optional key for macro series |
 | OPENAI_API_KEY or AI_API_KEY | Optional AI synthesis; API usage may be billed |
 | AI_MODEL | Optional Responses API model ID; default is gpt-6-luna |
-| TWELVE_DATA_API_KEY | Optional preferred metals candle provider |
+| TWELVE_DATA_API_KEY | Optional preferred metals quote/candle provider; real-time entitlement depends on plan |
+| ALLOW_METAL_FUTURES_PROXY | Optional; set true only if futures proxy is intentionally accepted for metals |
 | COINGECKO_API_KEY | Optional CoinGecko API key |
 | WEBHOOK_TOKEN | Optional authenticated alert webhook |
 | DATABASE_PATH | Optional persistent SQLite path |
