@@ -229,10 +229,13 @@ def opportunity_search(q: str = "", market: str = "crypto", limit: int = 30):
 
 
 @router.get("/api/opportunity-asset")
-def opportunity_asset(symbol: str, market: str = "crypto"):
+def opportunity_asset(symbol: str, market: str = "crypto", timeframe: str = "1d"):
     """Deep, narrative multi-timeframe analysis. Deliberately does not record paper trades."""
     from . import main as core
     market = (market or "crypto").lower()
+    timeframe = (timeframe or "1d").lower()
+    if timeframe not in ("15m", "1h", "4h", "1d", "1w"):
+        raise HTTPException(400, "تایم‌فریم نمودار نامعتبر است")
     symbol = (symbol or "").strip().upper().replace("/", "").replace("-", "").replace(" ", "")
     if market not in ("crypto", "gold", "silver"):
         raise HTTPException(400, "بازار نامعتبر است")
@@ -359,10 +362,12 @@ def opportunity_asset(symbol: str, market: str = "crypto"):
         "cot_data": broad_context.get("cot") or {},
         "dominance": dominance_data
     }
+    chart_result = tf_results.get(timeframe) or daily
+    chart_source_candles = candles_by_tf.get(timeframe) or candles_by_tf["1d"]
     daily_chart = [{
         "time": int(c["time"] // 1000), "open": c["open"], "high": c["high"],
         "low": c["low"], "close": c["close"], "volume": c.get("volume", 0) or 0
-    } for c in candles_by_tf["1d"][-700:]]
+    } for c in chart_source_candles[-300:]]
     chart_levels = {
         "support": (daily.get("chart_levels") or {}).get("support"),
         "resistance": (daily.get("chart_levels") or {}).get("resistance"),
@@ -392,7 +397,8 @@ def opportunity_asset(symbol: str, market: str = "crypto"):
         "last_daily_candle_time": daily.get("last_candle_time"),
         "timeframes": tf_results, "timeframe_errors": tf_errors, "timeframe_alignment": alignments,
         "report": report, "daily_analysis": daily, "levels": chart_levels,
-        "chart_candles": daily_chart, "chart_markers": [],
+        "chart_candles": daily_chart, "chart_markers": chart_result.get("chart_markers", []),
+        "chart_timeframe": timeframe, "chart_candle_count": len(daily_chart),
         "market_context": {"event_risk": event_risk, "derivatives": derivatives, "external_confirmation": external},
         "data_note": "کندل‌های باز حذف شده‌اند. قیمت زنده جدا از قیمت آخرین کندل بسته‌شده نمایش داده می‌شود. منابع و خطاهای هر تایم‌فریم جداگانه درج می‌شوند.",
         "paper_trade_created": False,
