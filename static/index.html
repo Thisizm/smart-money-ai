@@ -163,7 +163,7 @@ function renderChart(d){
  }
  const ob=levels.order_block||{},fvg=levels.fvg||{};
  const showOb=document.getElementById("overlay-ob").checked,showFvg=document.getElementById("overlay-fvg").checked,showStructure=document.getElementById("overlay-structure").checked;
- if(showOb&&ob.low!=null&&ob.high!=null&&!ob.mitigated){
+ if(showOb&&ob.low!=null&&ob.high!=null&&!ob.mitigated&&ob.relevant!==false){
   line(ob.low,"#f59e0b","کف Order Block",dotted,1,false);
   line(ob.high,"#f59e0b","سقف Order Block",dotted,1,false);
  }
@@ -242,7 +242,7 @@ function showA(d){
  let details=[];
  details.push("<h3>نقشه نقدینگی و ساختار پیشرفته</h3>");
  details.push('<div class="item">سقف‌های برابر: '+fmt(liq.equal_highs_pool)+' | کف‌های برابر: '+fmt(liq.equal_lows_pool)+' | سطح تعادل: '+fmt(pd.equilibrium)+'</div>');
- details.push('<div class="item">Order Block: '+(ob.type||"تأیید نشد")+' | محدوده: '+(ob.low==null?"—":fmt(ob.low)+" تا "+fmt(ob.high))+' | وضعیت: '+(ob.mitigated==null?"—":ob.mitigated?"برگشت/مصرف شده":"هنوز تست نشده")+'</div>');
+ details.push('<div class="item">Order Block: '+(ob.type||"تأیید نشد")+' | محدوده: '+(ob.low==null?"—":fmt(ob.low)+" تا "+fmt(ob.high))+' | فاصله: '+(ob.distance_atr==null?"—":fmt(ob.distance_atr)+" ATR")+' | وضعیت: '+(ob.mitigated==null?"—":ob.mitigated?"برگشت/مصرف شده":"هنوز تست نشده")+' | تأثیر امتیازی: '+fmt(ob.score_adjustment||0)+'</div>');
  const lc=d.liquidation_context||{},hm=d.liquidation_heatmap||{};
  details.push('<div class="item">CoinGlass Liquidation Map: '+(hm.available?"فعال | "+(hm.range||"24h"):"در دسترس نیست")+' | خوشه بالایی: '+(lc.nearest_above?fmt(lc.nearest_above.price):"—")+' | خوشه پایینی: '+(lc.nearest_below?fmt(lc.nearest_below.price):"—")+' | تعدیل امتیاز: '+fmt(lc.score_adjustment||0)+'</div>');
  details.push('<div class="small">'+(lc.note||hm.note||"")+"</div>");
