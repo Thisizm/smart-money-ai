@@ -1245,7 +1245,7 @@ def status():
             "cot_positions": "CFTC public weekly disaggregated futures-only reports",
             "cross_asset_correlations": "BTC/ETH/gold/silver daily returns",
             "research_backtesting": "chronological holdout with fee/slippage stress",
-            "paper_trading": "automatic simulated signal capture and live-quote monitoring; no exchange orders"
+            "paper_trading": "only separately armed primary-analysis or smart-entry levels create pending simulated entries; live exchange orders are disabled"
         },
         "live_trading": False,
         "supported_timeframes": list(TIMEFRAMES.keys())
