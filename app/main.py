@@ -253,7 +253,7 @@ def get_yahoo_metals_candles(market, timeframe):
 
 
 def get_twelve_data_metals_candles(symbol, timeframe):
-    """Fetch spot precious-metal candles from Twelve Data after Binance Futures is unavailable."""
+    """Fetch spot precious-metal candles from Twelve Data as the primary metals source."""
     if not TWELVE_DATA_API_KEY:
         raise RuntimeError("TWELVE_DATA_API_KEY در تنظیمات Render ثبت نشده است")
     provider_symbol = TWELVE_DATA_METAL_SYMBOLS.get(symbol)
@@ -808,10 +808,10 @@ def analyze(candles, market, symbol, timeframe):
     bearish_trigger = max(0.0, range_low - breakout_buffer)
     bullish_risk = max(atr * 1.2, breakout_buffer * 3)
     bearish_risk = max(atr * 1.2, breakout_buffer * 3)
-    bullish_stop = bullish_trigger - bullish_risk
+    bullish_stop = max(0.0, bullish_trigger - bullish_risk)
     bearish_stop = bearish_trigger + bearish_risk
     bullish_targets = [bullish_trigger + bullish_risk * r for r in (1.5, 2.5, 3.5)]
-    bearish_targets = [bearish_trigger - bearish_risk * r for r in (1.5, 2.5, 3.5)]
+    bearish_targets = [max(0.0, bearish_trigger - bearish_risk * r) for r in (1.5, 2.5, 3.5)]
     entry_price = price if direction in ("BUY", "SELL") else None
     if price >= range_high - atr * 0.25:
         location_text = "قیمت در نزدیکی سقف محدوده اخیر و مقاومت کوتاه‌مدت قرار دارد."
@@ -1060,7 +1060,7 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     candles = get_candles(market, symbol, timeframe)
     result = analyze(candles, market, symbol, timeframe)
     result["analysis_price"] = result.get("price")
-    result["candle_source"] = (candles[-1].get("source") if candles else None) or ("Binance Spot" if market == "crypto" else "Binance USD-M Futures")
+    result["candle_source"] = (candles[-1].get("source") if candles else None) or ("Binance Spot" if market == "crypto" else "Twelve Data / Yahoo Finance metals fallback")
     result["live_quote"] = get_live_quote(market, symbol)
     chart_bars = completed_candles(candles, timeframe)[-220:]
     result["chart_candles"] = [{
