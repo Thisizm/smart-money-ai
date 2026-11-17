@@ -147,6 +147,23 @@ class AdvancedAnalysisTests(unittest.TestCase):
                     "BLOCKED_BY_EXECUTION_QUALITY"
                 ))
 
+
+    def test_smart_entry_requires_structural_stop_and_liquidity_target(self):
+        result = analyze(sample_candles(), "crypto", "BTCUSDT", "1d")
+        for side in ("long", "short"):
+            plan = result["smart_entry"][side]
+            if plan.get("available"):
+                entry = plan["entry"]
+                stop = plan["stop_loss"]
+                target = plan["targets"][0]
+                if side == "long":
+                    self.assertLess(stop, entry)
+                    self.assertGreaterEqual((target - entry) / (entry - stop), 1.5)
+                else:
+                    self.assertGreater(stop, entry)
+                    self.assertGreaterEqual((entry - target) / (stop - entry), 1.5)
+                self.assertEqual(plan["first_target_source"], "opposing_confirmed_swing_liquidity")
+
     def test_pearson_correlation(self):
         result = pearson_correlation([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], [2, 4, 6, 8, 10, 12, 14, 16, 18, 20])
         self.assertAlmostEqual(result, 1.0, places=6)
