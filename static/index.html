@@ -26,6 +26,20 @@ body.chart-is-fullscreen{overflow:hidden}
 <section id="dominance" hidden><div class="panel"><h3>دامیننس بازار</h3><button onclick="dominance()">به‌روزرسانی</button><div id="dstatus" class="muted"></div><div id="dmetrics" class="metrics"></div><div id="dnote" class="small"></div></div></section>
 <section id="context" hidden><div class="panel"><h3>اخبار و عوامل اثرگذار</h3><div class="row"><div class="field"><label>دارایی</label><select id="asset"><option value="gold">طلا</option><option value="silver">نقره</option><option value="crypto">کریپتو</option></select></div><button onclick="context()">دریافت اخبار و اقتصاد</button><button onclick="correlations()">همبستگی بازارها</button></div><div id="corrout"></div><div id="cstatus" class="muted"></div><h3>تقویم اقتصادی آمریکا</h3><div id="calendar" class="item">در حال دریافت تقویم…</div><div id="factors"></div><h3>موقعیت‌گیری هفتگی COT طلا/نقره</h3><div id="cot"></div><h3>تقویم اقتصادی</h3><div class="item">تقویم رسمی Forex Factory را باز کن؛ ساعت‌ها و درجه اهمیت خبرها را آنجا ببین. این سایت API رسمی عمومی مستند ندارد و استفاده خودکار از داده‌هایش محدودیت شرایط استفاده دارد، بنابراین در این نسخه داده‌اش را بدون مجوز اسکرپ نمی‌کنیم.<br><a href="https://www.forexfactory.com/calendar/" target="_blank" rel="noopener">باز کردن تقویم Forex Factory</a></div><h3>اخبار</h3><div id="news"></div><h3>شاخص‌های اقتصاد آمریکا</h3><div id="macro"></div></div></section>
 <section id="scanner" hidden><div class="panel"><h3>اسکنر بازار</h3><div class="row"><div class="field"><label>بازار</label><select id="sm"><option value="all">همه</option><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div><div class="field"><label>تایم‌فریم</label><select id="st"><option>15m</option><option>1h</option><option>4h</option><option>1d</option></select></div></div><button onclick="scanner()" style="margin-top:10px">شروع اسکن</button><div id="sstatus" class="muted"></div><div id="sresults"></div></div></section>
+<section id="opportunities" hidden>
+<div class="panel">
+ <div class="row" style="align-items:end">
+  <div class="field"><label>بازار فرصت‌یابی</label><select id="op-market"><option value="all">همه بازارها</option><option value="crypto">کریپتو</option><option value="gold">طلا</option><option value="silver">نقره</option></select></div>
+  <div class="field"><label>نمایش نتایج</label><select id="op-mode"><option value="strict">فقط ستاپ‌های بهتر</option><option value="all">همراه با موارد بدون ورود</option></select></div>
+  <button onclick="loadOpportunities(true)">اسکن دوباره بازار</button>
+ </div>
+ <div id="op-status" class="muted">برای پیدا کردن فرصت‌ها، اسکن بازار را اجرا کن.</div>
+ <div id="op-summary" class="metrics"></div><div id="op-results"></div>
+ <div class="small">تحلیل مستقل روزانه و تأیید ۴ ساعته. امتیاز کیفیت احتمال برد نیست. این بخش معامله‌ای ثبت نمی‌کند.</div>
+</div>
+<div class="panel" id="op-chart-panel"><div class="chart-head"><b id="op-chart-title">نمودار تحلیل فرصت</b><span id="op-chart-source" class="small">یک ارز را برای دیدن نمودار انتخاب کن.</span></div>
+ <div id="op-chart" style="width:100%;height:360px;direction:ltr"></div><div id="op-chart-legend" class="chart-legend"></div><div id="op-chart-details" class="small"></div>
+</div></section>
 <section id="ai" hidden><div class="panel"><h3>جمع‌بندی هوش مصنوعی</h3><p class="small">ابتدا تحلیل تکنیکال یا خبرها را دریافت کن. نیازمند AI_API_KEY در Render است و استفاده از API ممکن است هزینه داشته باشد.</p><button onclick="ai()">ساخت جمع‌بندی</button><div id="aistatus" class="muted"></div><pre id="aiout"></pre></div></section>
 <details class="panel" id="resources-panel"><summary style="cursor:pointer;font-weight:700">وضعیت منابع و اتصال‌ها — برای دیدن جزئیات بزن</summary><div id="providers" class="small" style="margin-top:12px">در حال بررسی…</div></details><div class="panel small">معامله خودکار خاموش است و سفارش واقعی ثبت نمی‌شود. کلیدهای API را فقط در Environment Variables در Render وارد کن، نه در چت یا کد عمومی. هیچ سیستم معاملاتی سود تضمینی ندارد.</div></main>
 <script>
