@@ -1,0 +1,61 @@
+//@version=6
+indicator("SMART MONEY AI ULTIMATE | Webhook Bridge", overlay=true, max_labels_count=100, max_lines_count=100, max_boxes_count=50)
+
+// Pine detects chart conditions and sends structured alerts to your private backend.
+// News and external AI analysis happen on the backend, not inside Pine Script.
+pivotLen = input.int(5, "Swing length", minval=2)
+emaFastLen = input.int(21, "Fast EMA")
+emaSlowLen = input.int(50, "Slow EMA")
+htf = input.timeframe("240", "Higher timeframe")
+minScore = input.int(70, "Minimum score", minval=30, maxval=100)
+atrLen = input.int(14, "ATR length")
+slAtr = input.float(1.5, "Stop ATR multiplier", minval=0.2)
+webhookToken = input.string("CHANGE_ME", "Webhook token")
+
+fast = ta.ema(close, emaFastLen)
+slow = ta.ema(close, emaSlowLen)
+atr = ta.atr(atrLen)
+htfBull = request.security(syminfo.tickerid, htf, ta.ema(close, emaFastLen)[1] > ta.ema(close, emaSlowLen)[1], lookahead=barmerge.lookahead_on)
+
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+var float lastH = na
+var float lastL = na
+var int bias = 0
+if not na(ph)
+    lastH := ph
+if not na(pl)
+    lastL := pl
+
+bullBreak = not na(lastH) and ta.crossover(close, lastH)
+bearBreak = not na(lastL) and ta.crossunder(close, lastL)
+bullSweep = not na(lastL) and low < lastL and close > lastL
+bearSweep = not na(lastH) and high > lastH and close < lastH
+if bullBreak
+    bias := 1
+if bearBreak
+    bias := -1
+
+bullFvg = low > high[2]
+bearFvg = high < low[2]
+bullScore = (bias == 1 ? 25 : 0) + (fast > slow ? 20 : 0) + (htfBull ? 20 : 0) + (bullSweep ? 20 : 0) + (bullFvg ? 10 : 0) + (volume > ta.sma(volume, 20) ? 5 : 0)
+bearScore = (bias == -1 ? 25 : 0) + (fast < slow ? 20 : 0) + (not htfBull ? 20 : 0) + (bearSweep ? 20 : 0) + (bearFvg ? 10 : 0) + (volume > ta.sma(volume, 20) ? 5 : 0)
+
+buy = barstate.isconfirmed and bullScore >= minScore and fast > slow and htfBull and (bullBreak or bullSweep or bullFvg)
+sell = barstate.isconfirmed and bearScore >= minScore and fast < slow and not htfBull and (bearBreak or bearSweep or bearFvg)
+
+plot(fast, "EMA Fast", color=color.aqua)
+plot(slow, "EMA Slow", color=color.orange)
+plotshape(buy, "BUY", shape.labelup, location.belowbar, color=color.lime, text="BUY", textcolor=color.black)
+plotshape(sell, "SELL", shape.labeldown, location.abovebar, color=color.red, text="SELL", textcolor=color.white)
+
+if buy or sell
+    side = buy ? "BUY" : "SELL"
+    score = buy ? bullScore : bearScore
+    risk = atr * slAtr
+    stop = buy ? close-risk : close+risk
+    target1 = buy ? close+risk : close-risk
+    target2 = buy ? close+2*risk : close-2*risk
+    target3 = buy ? close+3*risk : close-3*risk
+    msg = '{"token":"' + webhookToken + '","symbol":"' + syminfo.tickerid + '","timeframe":"' + timeframe.period + '","side":"' + side + '","price":' + str.tostring(close) + ',"score":' + str.tostring(score) + ',"stop":' + str.tostring(stop) + ',"tp1":' + str.tostring(target1) + ',"tp2":' + str.tostring(target2) + ',"tp3":' + str.tostring(target3) + ',"bull_sweep":' + str.tostring(bullSweep) + ',"bear_sweep":' + str.tostring(bearSweep) + ',"bull_fvg":' + str.tostring(bullFvg) + ',"bear_fvg":' + str.tostring(bearFvg) + '}'
+    alert(msg, alert.freq_once_per_bar_close)
