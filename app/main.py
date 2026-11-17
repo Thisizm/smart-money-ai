@@ -88,6 +88,130 @@ def fetch_json(url, headers=None, timeout=15):
         raise RuntimeError("Provider connection error: " + str(exc)[:160])
 
 
+
+def aggregate_candles(candles, timeframe):
+    """Aggregate lower-timeframe Yahoo candles into 4h or weekly bars."""
+    buckets = {}
+    for candle in candles:
+        stamp = datetime.fromtimestamp(candle["time"] / 1000, tz=timezone.utc)
+        if timeframe == "4h":
+            bucket_time = int(stamp.timestamp() // 14400 * 14400)
+        elif timeframe == "1w":
+            monday = (stamp - __import__("datetime").timedelta(days=stamp.weekday())).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            bucket_time = int(monday.timestamp())
+        else:
+            bucket_time = int(stamp.timestamp())
+        if bucket_time not in buckets:
+            buckets[bucket_time] = {
+                "time": bucket_time * 1000, "open": candle["open"],
+                "high": candle["high"], "low": candle["low"],
+                "close": candle["close"], "volume": candle.get("volume", 0) or 0
+            }
+        else:
+            bar = buckets[bucket_time]
+            bar["high"] = max(bar["high"], candle["high"])
+            bar["low"] = min(bar["low"], candle["low"])
+            bar["close"] = candle["close"]
+            bar["volume"] += candle.get("volume", 0) or 0
+    return [buckets[key] for key in sorted(buckets)]
+
+
+def get_yahoo_metals_candles(market, timeframe):
+    """No-key fallback for spot gold and silver using Yahoo Finance chart data."""
+    ticker = {"gold": "XAUUSD=X", "silver": "XAGUSD=X"}.get(market)
+    if not ticker:
+        raise RuntimeError("Unsupported metal market")
+
+    settings = {
+        "5m": ("5m", "5d", False),
+        "15m": ("15m", "1mo", False),
+        "1h": ("60m", "3mo", False),
+        "4h": ("60m", "6mo", True),
+        "1d": ("1d", "2y", False),
+        "1w": ("1d", "5y", True),
+    }
+    interval, period, aggregate = settings[timeframe]
+    url = (
+        "https://query1.finance.yahoo.com/v8/finance/chart/"
+        + urllib.parse.quote(ticker, safe="")
+        + "?" + urllib.parse.urlencode({
+            "range": period, "interval": interval, "events": "history"
+        })
+    )
+    data = fetch_json(url, headers={
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (compatible; SmartMoneyAI/2.1)"
+    }, timeout=20)
+    chart = data.get("chart", {})
+    if chart.get("error"):
+        raise RuntimeError(str(chart["error"]))
+    result = (chart.get("result") or [None])[0]
+    if not result:
+        raise RuntimeError("Yahoo Finance returned no chart data")
+    timestamps = result.get("timestamp") or []
+    quote = (result.get("indicators", {}).get("quote") or [{}])[0]
+    candles = []
+    for i, stamp in enumerate(timestamps):
+        try:
+            op, hi, lo, cl = (
+                quote.get("open", [])[i], quote.get("high", [])[i],
+                quote.get("low", [])[i], quote.get("close", [])[i]
+            )
+            if None in (op, hi, lo, cl):
+                continue
+            vol = (quote.get("volume") or [None] * len(timestamps))[i]
+            candles.append({
+                "time": int(stamp) * 1000,
+                "open": float(op), "high": float(hi), "low": float(lo),
+                "close": float(cl), "volume": float(vol or 0)
+            })
+        except (IndexError, TypeError, ValueError):
+            continue
+    if aggregate:
+        candles = aggregate_candles(candles, timeframe)
+    if len(candles) < 60:
+        raise RuntimeError(
+            "Yahoo Finance supplied only " + str(len(candles)) +
+            " usable candles for " + timeframe
+        )
+    return candles
+
+
+def get_twelve_data_metals_candles(symbol, timeframe):
+    tf = TIMEFRAMES[timeframe]
+    params = urllib.parse.urlencode({
+        "symbol": symbol, "interval": tf["twelve"], "outputsize": 250,
+        "apikey": TWELVE_DATA_API_KEY, "format": "JSON"
+    })
+    data = fetch_json("https://api.twelvedata.com/time_series?" + params)
+    if "values" not in data:
+        message = data.get("message") or data.get("status") or "No time-series values"
+        raise RuntimeError("Twelve Data: " + str(message)[:180])
+    candles = []
+    for row in reversed(data["values"]):
+        stamp = row.get("datetime", "")
+        parsed = None
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                parsed = datetime.strptime(stamp, fmt).replace(tzinfo=timezone.utc)
+                break
+            except ValueError:
+                pass
+        if parsed is None:
+            continue
+        candles.append({
+            "time": int(parsed.timestamp() * 1000),
+            "open": float(row["open"]), "high": float(row["high"]),
+            "low": float(row["low"]), "close": float(row["close"]),
+            "volume": float(row.get("volume") or 0)
+        })
+    if len(candles) < 50:
+        raise RuntimeError("Twelve Data returned insufficient candles")
+    return candles
+
+
 def get_candles(market, symbol, timeframe):
     if timeframe not in TIMEFRAMES:
         raise HTTPException(400, "تایم‌فریم نامعتبر است")
@@ -111,40 +235,24 @@ def get_candles(market, symbol, timeframe):
     if market in METALS:
         if symbol != METALS[market]:
             raise HTTPException(400, "نماد فلز نامعتبر است")
-        if not TWELVE_DATA_API_KEY:
-            raise HTTPException(503, "برای قیمت طلا و نقره، TWELVE_DATA_API_KEY در Render لازم است.")
-        params = urllib.parse.urlencode({
-            "symbol": symbol, "interval": tf["twelve"], "outputsize": 250,
-            "apikey": TWELVE_DATA_API_KEY, "format": "JSON"
-        })
+
+        provider_errors = []
+        if TWELVE_DATA_API_KEY:
+            try:
+                return get_twelve_data_metals_candles(symbol, timeframe)
+            except Exception as exc:
+                provider_errors.append("Twelve Data: " + str(exc)[:130])
+
         try:
-            data = fetch_json("https://api.twelvedata.com/time_series?" + params)
+            return get_yahoo_metals_candles(market, timeframe)
         except Exception as exc:
-            raise HTTPException(502, "خطا از منبع داده فلزات: " + str(exc))
-        if "values" not in data:
-            message = data.get("message") or data.get("status") or "نماد/تایم‌فریم در دسترس نیست"
-            raise HTTPException(502, "Twelve Data: " + str(message)[:180])
-        candles = []
-        for row in reversed(data["values"]):
-            stamp = row.get("datetime", "")
-            parsed = None
-            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-                try:
-                    parsed = datetime.strptime(stamp, fmt).replace(tzinfo=timezone.utc)
-                    break
-                except ValueError:
-                    pass
-            if parsed is None:
-                continue
-            candles.append({
-                "time": int(parsed.timestamp() * 1000),
-                "open": float(row["open"]), "high": float(row["high"]),
-                "low": float(row["low"]), "close": float(row["close"]),
-                "volume": float(row.get("volume") or 0)
-            })
-        if len(candles) < 50:
-            raise HTTPException(502, "داده کافی برای تحلیل این نماد/تایم‌فریم دریافت نشد.")
-        return candles
+            provider_errors.append("Yahoo Finance: " + str(exc)[:160])
+            raise HTTPException(
+                502,
+                "دریافت قیمت " + ("طلا" if market == "gold" else "نقره") +
+                " از منابع عمومی ناموفق بود. " + " | ".join(provider_errors) +
+                ". در صورت تداوم خطا می‌توانی TWELVE_DATA_API_KEY را در Render اضافه کنی."
+            )
 
     raise HTTPException(400, "فقط کریپتو، طلا و نقره پشتیبانی می‌شوند")
 
@@ -287,7 +395,7 @@ def status():
         "forex_enabled": False,
         "providers": {
             "crypto_prices": "Binance public market data",
-            "metals_prices": "Twelve Data " + ("configured" if TWELVE_DATA_API_KEY else "key_required"),
+            "metals_prices": ("Twelve Data primary + Yahoo Finance fallback" if TWELVE_DATA_API_KEY else "Yahoo Finance public fallback; Twelve Data key optional"),
             "crypto_dominance": "CoinGecko " + ("key_configured" if COINGECKO_API_KEY else "public_endpoint_attempt"),
             "global_news": "GDELT DOC 2.0",
             "macro_indicators": "FRED " + ("configured" if FRED_API_KEY else "key_required"),
