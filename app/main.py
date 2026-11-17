@@ -2535,9 +2535,29 @@ def get_marginpad_screener_confirmation(symbol):
 def market_context(asset: str = "gold"):
     if asset not in ("gold", "silver", "crypto"):
         raise HTTPException(400, "asset نامعتبر است")
-    macro_data = macro()
-    news_data = news(asset)
-    cot_data = cot_positions(asset) if asset in ("gold", "silver") else {"available": False, "note": "COT برای کریپتو در این بخش ارائه نمی‌شود."}
+    # Macro, headlines and COT are independent sources. Fetch them together:
+    # waiting for one provider should not add the latency of the others.
+    context_tasks = {
+        "macro": macro,
+        "news": lambda: news(asset),
+        "cot": (lambda: cot_positions(asset)) if asset in ("gold", "silver") else
+               (lambda: {"available": False, "note": "COT برای کریپتو در این بخش ارائه نمی‌شود."})
+    }
+    context_results = {}
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="market-context") as pool:
+        future_map = {pool.submit(fn): name for name, fn in context_tasks.items()}
+        for future in as_completed(future_map):
+            name = future_map[future]
+            try:
+                context_results[name] = future.result()
+            except Exception as exc:
+                context_results[name] = {
+                    "available": False, "error": str(exc)[:180],
+                    "note": "دریافت این منبع با خطا روبه‌رو شد؛ سایر منابع ادامه یافتند."
+                }
+    macro_data = context_results.get("macro", {"available": False, "indicators": []})
+    news_data = context_results.get("news", {"available": False, "articles": []})
+    cot_data = context_results.get("cot", {"available": False})
     factors = [
         {"factor": "دلار آمریکا", "status": "شاخص گسترده دلار FRED موجود است؛ جایگزین دقیق ICE DXY نیست" if any(x.get("series") == "DTWEXBGS" and x.get("available") for x in macro_data.get("indicators", [])) else "نیازمند منبع داده دلار", "impact": "دلار قوی می‌تواند بر فلزات و دارایی‌های ریسکی فشار وارد کند؛ رابطه قطعی نیست"},
         {"factor": "بازده واقعی اوراق", "status": "داده FRED موجود است" if any(x.get("series") == "DFII10" and x.get("available") for x in macro_data.get("indicators", [])) else "نیازمند FRED_API_KEY", "impact": "افزایش بازده واقعی معمولاً هزینه فرصت نگهداری طلا را بالا می‌برد"},
