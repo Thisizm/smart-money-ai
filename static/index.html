@@ -1,0 +1,52 @@
+
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Money AI</title>
+<style>
+body{margin:0;background:#101827;color:#eee;font-family:Tahoma,Arial;padding:20px}
+h1{color:#42d6a4}
+.card{background:#1c293b;padding:18px;margin:14px 0;border-radius:12px}
+button{background:#42d6a4;border:0;padding:12px 20px;border-radius:8px;font-weight:bold}
+pre{white-space:pre-wrap;direction:ltr}
+</style>
+</head>
+<body>
+<h1>Smart Money AI</h1>
+<p>داشبورد تحلیل بازار و هشدارهای معاملاتی</p>
+<div class="card">
+<h3>وضعیت سرور</h3>
+<p id="status">در حال بررسی...</p>
+</div>
+<div class="card">
+<h3>آخرین هشدارها</h3>
+<button onclick="loadAlerts()">به‌روزرسانی</button>
+<pre id="alerts">در انتظار دریافت اطلاعات...</pre>
+</div>
+<script>
+async function loadStatus(){
+try{
+const r=await fetch('/health');
+const d=await r.json();
+document.getElementById('status').textContent=d.status==='ok'?'سرور فعال است':'وضعیت نامشخص';
+}catch(e){
+document.getElementById('status').textContent='اتصال برقرار نشد';
+}
+}
+async function loadAlerts(){
+try{
+const r=await fetch('/api/alerts');
+const d=await r.json();
+document.getElementById('alerts').textContent=
+d.length?JSON.stringify(d,null,2):'هنوز هشداری دریافت نشده است';
+}catch(e){
+document.getElementById('alerts').textContent='خطا در دریافت هشدارها';
+}
+}
+loadStatus();
+loadAlerts();
+</script>
+</body>
+</html>
