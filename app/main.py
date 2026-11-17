@@ -1325,8 +1325,19 @@ def api_quote(market: str = "crypto", symbol: str = "BTCUSDT"):
 @app.get("/api/backtest")
 def api_backtest(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str = "1h"):
     candles = completed_candles(get_candles(market, symbol, timeframe), timeframe)
-    result = run_research_backtest(candles, timeframe)
-    result.update({"market": market, "symbol": symbol, "updated_at": utc_now()})
+    # Full production analysis is computationally heavier than the baseline.
+    # Bound replay size to keep the public endpoint responsive; users can raise
+    # this limit via BACKTEST_CANDLE_LIMIT after measuring their instance capacity.
+    replay_limit = max(120, min(int(os.getenv("BACKTEST_CANDLE_LIMIT", "500")), 1000))
+    candles = candles[-replay_limit:]
+    engine = lambda history: analyze(history, market, symbol, timeframe)
+    result = run_research_backtest(candles, timeframe, signal_engine=engine)
+    result.update({
+        "market": market, "symbol": symbol, "updated_at": utc_now(),
+        "production_engine_replay": True,
+        "history_limit": replay_limit,
+        "history_note": "بازپخش موتور تحلیل تولیدی روی آخرین کندل‌های بسته‌شده؛ فیلترهای وابسته به قیمت زنده و تقویم در داده تاریخی قابل بازسازی کامل نیستند."
+    })
     return result
 
 
