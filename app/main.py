@@ -799,6 +799,96 @@ def analyze(candles, market, symbol, timeframe):
             wait_reasons.append("تأیید کافی برای ورود فروش وجود ندارد")
         notes.append("علت WAIT: " + "؛ ".join(wait_reasons or ["شواهد کافی برای ورود وجود ندارد"]))
 
+    # Conditional breakout scenarios are separate from an active trade signal.
+    scenario_window = candles[-21:-1] if len(candles) > 21 else candles[:-1]
+    range_high = max(c["high"] for c in scenario_window) if scenario_window else swing_high
+    range_low = min(c["low"] for c in scenario_window) if scenario_window else swing_low
+    breakout_buffer = max(atr * 0.12, abs(price) * 0.0002)
+    bullish_trigger = range_high + breakout_buffer
+    bearish_trigger = max(0.0, range_low - breakout_buffer)
+    bullish_risk = max(atr * 1.2, breakout_buffer * 3)
+    bearish_risk = max(atr * 1.2, breakout_buffer * 3)
+    bullish_stop = bullish_trigger - bullish_risk
+    bearish_stop = bearish_trigger + bearish_risk
+    bullish_targets = [bullish_trigger + bullish_risk * r for r in (1.5, 2.5, 3.5)]
+    bearish_targets = [bearish_trigger - bearish_risk * r for r in (1.5, 2.5, 3.5)]
+    entry_price = price if direction in ("BUY", "SELL") else None
+    if price >= range_high - atr * 0.25:
+        location_text = "قیمت در نزدیکی سقف محدوده اخیر و مقاومت کوتاه‌مدت قرار دارد."
+    elif price <= range_low + atr * 0.25:
+        location_text = "قیمت در نزدیکی کف محدوده اخیر و حمایت کوتاه‌مدت قرار دارد."
+    else:
+        location_text = "قیمت فعلاً داخل محدوده نوسان اخیر قرار دارد و هنوز از سقف/کف آن فاصله دارد."
+
+    if direction == "BUY":
+        signal_text = (
+            "سیگنال خرید فعال است. قیمت ورود مرجع بر اساس آخرین کندل بسته‌شده محاسبه شده؛ "
+            "ورود با قیمت زنده ممکن است متفاوت باشد. حد ضرر و اهداف روی نمودار مشخص شده‌اند."
+        )
+    elif direction == "SELL":
+        signal_text = (
+            "سیگنال فروش فعال است. قیمت ورود مرجع بر اساس آخرین کندل بسته‌شده محاسبه شده؛ "
+            "ورود با قیمت زنده ممکن است متفاوت باشد. حد ضرر و اهداف روی نمودار مشخص شده‌اند."
+        )
+    else:
+        signal_text = "فعلاً سیگنال ورود معتبر نداریم؛ وضعیت WAIT است و سطوح زیر فقط سناریوهای مشروط هستند."
+
+    if price > bullish_trigger:
+        bullish_text = (
+            "سناریوی صعودی: آخرین کندل بسته‌شده بالای سطح شکست قرار گرفته است؛ "
+            "از تعقیب قیمت خودداری کن و تثبیت/پولبک موفق به محدوده "
+            + str(round(bullish_trigger, 8)) + " را برای تأیید بررسی کن."
+        )
+    else:
+        bullish_text = (
+            "سناریوی صعودی: فقط با بسته‌شدن کندل " + timeframe +
+            " بالای " + str(round(bullish_trigger, 8)) +
+            " و ترجیحاً افزایش حجم، شکست تأیید می‌شود؛ سپس حفظ سطح در پولبک می‌تواند ورود را معتبرتر کند."
+        )
+    if price < bearish_trigger:
+        bearish_text = (
+            "سناریوی نزولی: آخرین کندل بسته‌شده زیر سطح شکست قرار گرفته است؛ "
+            "از تعقیب قیمت خودداری کن و پولبک ناموفق به محدوده "
+            + str(round(bearish_trigger, 8)) + " را برای تأیید بررسی کن."
+        )
+    else:
+        bearish_text = (
+            "سناریوی نزولی: فقط با بسته‌شدن کندل " + timeframe +
+            " زیر " + str(round(bearish_trigger, 8)) +
+            " و ترجیحاً افزایش حجم، شکست نزولی تأیید می‌شود؛ سپس ناتوانی قیمت در بازپس‌گیری سطح را بررسی کن."
+        )
+    risk_text = (
+        "فیلتر ریسک ورود را مسدود کرده است؛ تا رفع هشدارها هیچ‌یک از سناریوها مجوز ورود نیست."
+        if risk_blocked else
+        "شکست صرفاً با سایه کندل تأیید نمی‌شود؛ مبنا بسته‌شدن کندل و سپس بررسی پولبک است."
+    )
+    scenario_analysis = {
+        "location": location_text,
+        "signal": signal_text,
+        "bullish": bullish_text,
+        "bearish": bearish_text,
+        "risk": risk_text,
+        "timeframe": timeframe
+    }
+    trade_plan = {
+        "entry": entry_price,
+        "stop_loss": stop if direction in ("BUY", "SELL") else None,
+        "targets": targets if direction in ("BUY", "SELL") else [],
+        "risk_reward": [1.5, 2.5, 3.5] if direction in ("BUY", "SELL") else [],
+        "entry_basis": "آخرین کندل بسته‌شده؛ قیمت اجرای واقعی ممکن است با قیمت زنده و اسلیپیج متفاوت باشد."
+    }
+    conditional_scenarios = {
+        "bullish": {
+            "trigger": bullish_trigger, "entry": bullish_trigger,
+            "stop_loss": bullish_stop, "targets": bullish_targets,
+            "confirmation": "بسته‌شدن کندل بالای سطح شکست و ترجیحاً پولبک موفق"
+        },
+        "bearish": {
+            "trigger": bearish_trigger, "entry": bearish_trigger,
+            "stop_loss": bearish_stop, "targets": bearish_targets,
+            "confirmation": "بسته‌شدن کندل زیر سطح شکست و ترجیحاً پولبک ناموفق"
+        }
+    }
     return {
         "market": market, "symbol": symbol, "timeframe": timeframe,
         "signal": direction, "bias": bias,
@@ -808,12 +898,23 @@ def analyze(candles, market, symbol, timeframe):
         "score_note": "امتیاز تجربی هم‌جهتی شروط است و احتمال موفقیت معامله نیست.",
         "wait_reason": wait_reasons,
         "market_structure": structure_trend,
+        "price": price, "atr": atr, "entry_price": entry_price, "trade_plan": trade_plan,
+        "conditional_scenarios": conditional_scenarios, "scenario_analysis": scenario_analysis,
+        "chart_levels": {
+            "support": range_low, "resistance": range_high,
+            "long_trigger": bullish_trigger, "short_trigger": bearish_trigger,
+            "entry": entry_price, "stop_loss": stop if direction in ("BUY", "SELL") else None,
+            "targets": targets if direction in ("BUY", "SELL") else [],
+            "fvg": bullish_fvg_zone or bearish_fvg_zone,
+            "order_block": order_block
+        },
         "price": price, "atr": atr, "stop_loss": stop,
         "take_profit_1": targets[0], "take_profit_2": targets[1], "take_profit_3": targets[2],
         "risk_per_unit": risk, "swing_high": swing_high, "swing_low": swing_low,
         "bos": "صعودی" if bos_up else "نزولی" if bos_down else "ندارد",
         "choch": choch, "liquidity_sweep": "پایین" if sweep_low else "بالا" if sweep_high else "ندارد",
         "liquidity_sweep_level": (sweep_low_event or sweep_high_event or {}).get("level"),
+        "liquidity_sweep_time": (sweep_low_event or sweep_high_event or {}).get("time"),
         "fvg": "صعودی" if bullish_fvg else "نزولی" if bearish_fvg else "ندارد",
         "fvg_zone": bullish_fvg_zone or bearish_fvg_zone,
         "order_block_approx": order_block, "analysis": notes,
@@ -852,8 +953,8 @@ def status():
         "providers": {
             "crypto_prices": "Binance Spot live ticker + closed OHLCV candles for all active USDT pairs",
             "crypto_derivatives": "Binance public futures funding/OI/long-short + spot order-book snapshot",
-            "metals_prices": "Binance USD-M TradFi perpetual XAUUSDT and XAGUSDT live ticker + OHLCV candles",
-            "metal_instrument_note": "USDT-settled perpetual futures, not physical spot metal",
+            "metals_prices": "Twelve Data XAU/USD and XAG/USD spot when entitled; Yahoo Finance fallback, including COMEX SI=F futures proxy for silver",
+            "metal_instrument_note": "Silver SI=F fallback is a COMEX continuous futures proxy, not XAG/USD spot; provider feeds can differ.",
             "crypto_dominance": "CoinGecko global endpoint with source timestamp" + ("; API key configured" if COINGECKO_API_KEY else "; public endpoint"),
             "global_news": "GDELT DOC 2.0",
             "macro_indicators": "FRED " + ("configured" if FRED_API_KEY else "key_required"),
@@ -876,7 +977,7 @@ def options():
         "crypto_source": "Binance Spot — active USDT pairs",
         "gold": [METALS["gold"]],
         "silver": [METALS["silver"]],
-        "metal_source": "Binance USD-M TradFi perpetual",
+        "metal_source": "Twelve Data spot primary; Yahoo Finance spot/futures fallback (silver SI=F is COMEX futures proxy)",
         "timeframes": list(TIMEFRAMES.keys()),
         "forex": []
     }
@@ -961,6 +1062,32 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     result["analysis_price"] = result.get("price")
     result["candle_source"] = (candles[-1].get("source") if candles else None) or ("Binance Spot" if market == "crypto" else "Binance USD-M Futures")
     result["live_quote"] = get_live_quote(market, symbol)
+    chart_bars = completed_candles(candles, timeframe)[-220:]
+    result["chart_candles"] = [{
+        "time": int(c["time"] // 1000),
+        "open": c["open"], "high": c["high"],
+        "low": c["low"], "close": c["close"],
+        "volume": c.get("volume", 0) or 0
+    } for c in chart_bars]
+    result["chart_source"] = result.get("candle_source")
+    marker_time = int(chart_bars[-1]["time"]) if chart_bars else None
+    result["chart_markers"] = []
+    if marker_time and result.get("signal") == "BUY":
+        result["chart_markers"].append({
+            "time": marker_time, "position": "belowBar", "color": "#28c997",
+            "shape": "arrowUp", "text": "BUY"
+        })
+    elif marker_time and result.get("signal") == "SELL":
+        result["chart_markers"].append({
+            "time": marker_time, "position": "aboveBar", "color": "#ff7182",
+            "shape": "arrowDown", "text": "SELL"
+        })
+    if result.get("liquidity_sweep_time"):
+        result["chart_markers"].append({
+            "time": int(result["liquidity_sweep_time"] // 1000),
+            "position": "aboveBar" if result.get("liquidity_sweep") == "بالا" else "belowBar",
+            "color": "#e9b95e", "shape": "circle", "text": "Liquidity sweep"
+        })
     if market == "crypto":
         result["derivatives"] = get_crypto_derivatives(symbol)
     else:
