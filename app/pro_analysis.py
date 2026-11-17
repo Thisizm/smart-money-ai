@@ -260,7 +260,9 @@ def advanced_analysis(candles, timeframe):
 
     volume_profile = _volume_profile(candles)
     session = _session_levels(candles)
-    candle_age = max(0, int(datetime.now(timezone.utc).timestamp() * 1000 - last["time"]))
+    timeframe_ms = {"5m": 300000, "15m": 900000, "1h": 3600000, "4h": 14400000, "1d": 86400000, "1w": 604800000}.get(timeframe, 0)
+    last_close_time_ms = last["time"] + timeframe_ms
+    candle_age = max(0, int(datetime.now(timezone.utc).timestamp() * 1000 - last_close_time_ms))
     volume_available = any(v > 0 for v in volumes[-30:])
     source_symbols = sorted({c.get("source_symbol") for c in candles if c.get("source_symbol")})
 
@@ -276,7 +278,7 @@ def advanced_analysis(candles, timeframe):
         "fibonacci": fib,
         "volume_profile": volume_profile,
         "session_levels": session,
-        "data_quality": {"closed_candle_analysis": True, "candles_used": len(candles), "last_candle_time_ms": last["time"], "last_candle_age_seconds": candle_age // 1000, "volume_available": volume_available, "timeframe": timeframe, "source_symbols": source_symbols},
+        "data_quality": {"closed_candle_analysis": True, "candles_used": len(candles), "last_candle_time_ms": last["time"], "last_candle_close_time_ms": last_close_time_ms, "last_candle_age_seconds": candle_age // 1000, "volume_available": volume_available, "timeframe": timeframe, "source_symbols": source_symbols},
         "risk_template": {"default_risk_percent": 0.5, "risk_budget_per_10000_account_value": 50.0, "position_size_formula": "risk_budget / abs(entry - stop_loss)", "note": "فرمول آموزشی است؛ ضریب قرارداد، اهرم، کارمزد، اسلیپیج و موجودی واقعی باید جداگانه لحاظ شوند."},
         "methodology_note": "ADX/RSI و VWAP/پروفایل بر اساس OHLCV عمومی محاسبه می‌شوند؛ حجم پروفایل تقریبی است و داده تیک، دفتر سفارش تاریخی یا جریان سفارش نهادی نیست."
     }
