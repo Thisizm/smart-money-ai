@@ -270,6 +270,8 @@ def record_signal(result, entry_mode="smart"):
         live_price = float(quote["price"])
         if entry_mode == "smart":
             smart = result.get("smart_entry") or {}
+            if smart.get("risk_gate_passed") is False:
+                return {"recorded": False, "reason": "smart_entry_risk_gate_blocked"}
             if smart.get("preferred_side") != ("long" if side == "LONG" else "short"):
                 return {"recorded": False, "reason": "smart_entry_direction_mismatch"}
             smart_plan = smart.get("long" if side == "LONG" else "short") or {}
