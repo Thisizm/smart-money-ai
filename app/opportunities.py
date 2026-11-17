@@ -137,7 +137,7 @@ def _serialize_candidate(market, symbol, daily_candles, daily, four_hour, quote,
 
 
 @router.get("/api/opportunities")
-def opportunities(market: str = "all", limit: int = 12, refresh: bool = False):
+def opportunities(market: str = "all", limit: int = 20, refresh: bool = False):
     # Imports are intentionally lazy to avoid circular imports during app startup.
     from . import main as core
 
