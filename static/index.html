@@ -56,7 +56,7 @@ body.chart-is-fullscreen{overflow:hidden}
 <section id="ai" hidden><div class="panel"><h3>جمع‌بندی کمکی هوش مصنوعی</h3><p class="small">برای تصمیم مستقل اصلی از بخش «تحلیل سوم: مغز اصلی هوش مصنوعی» در صفحه تحلیل استفاده کن. این بخش قدیمی فقط جمع‌بندی متنی می‌سازد و ممکن است از کلید AI_API_KEY پولی استفاده کند.</p><button onclick="ai()">ساخت جمع‌بندی</button><div id="aistatus" class="muted"></div><pre id="aiout"></pre></div></section>
 <details class="panel" id="resources-panel"><summary style="cursor:pointer;font-weight:700">وضعیت منابع و اتصال‌ها — برای دیدن جزئیات بزن</summary><div id="providers" class="small" style="margin-top:12px">در حال بررسی…</div></details><div class="panel small">معامله واقعی کاملاً خاموش است. معامله آزمایشی فقط با روشن‌کردن کلید جداگانه در نمودار تحلیل اصلی یا ورود هوشمند فعال می‌شود. کلیدهای API را فقط در Environment Variables در Render وارد کن، نه در چت یا کد عمومی. هیچ سیستم معاملاتی سود تضمینی ندارد.</div></main>
 <script>
-let paperTradesCache=[],paperChart=null,paperChartResizeObserver=null,primaryPaperArmed=false,smartPaperArmed=false,aiBrainChart=null;
+let paperTradesCache=[],paperChart=null,paperChartResizeObserver=null,paperChartQuoteTimer=null,paperChartQuoteLine=null,paperChartSelectedTradeId=null,primaryPaperArmed=false,smartPaperArmed=false,aiBrainChart=null;
 let coins=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","AVAXUSDT","LTCUSDT","TRXUSDT","DOTUSDT","BCHUSDT","NEARUSDT","UNIUSDT","SUIUSDT","TONUSDT","ETCUSDT","APTUSDT","ARBUSDT"];let lastA=null,lastC=null,lastCorr=null,currentAnalysisMarket=null,currentAnalysisSymbol=null,priceChart=null,rsiChart=null,smartEntryChart=null,chartResizeObserver=null,rsiResizeObserver=null,smartEntryResizeObserver=null,livePriceLine=null;
 document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll("main section").forEach(s=>s.hidden=true);document.getElementById(b.dataset.id).hidden=false;if(b.dataset.id==="dominance")dominance();if(b.dataset.id==="opportunities")loadOpportunities(false)});
 function symbols(){let m=document.getElementById("market").value;const search=document.getElementById("symbol-search");if(search)search.parentElement.style.display=m==="crypto"?"block":"none";filterSymbols();document.getElementById("coin-count").textContent=m==="crypto"?"منبع: Binance Spot | "+coins.length+" جفت فعال USDT":m==="gold"?"منبع فلز: Twelve Data XAU/USD؛ جایگزین Yahoo Finance spot":"منبع نقره: Twelve Data XAG/USD؛ جایگزین Yahoo spot و در صورت خطا COMEX SI=F آتی (نه اسپات و نه Binance)"}
@@ -690,14 +690,33 @@ function paperTradeCard(t,active){
  (active?'<br><button onclick="showPaperTradeChart('+t.id+')">نمایش نمودار</button> <button onclick="closePaperTrade('+t.id+')">'+(t.status==="PENDING_ENTRY"?"لغو ورود":"بستن معامله")+'</button>':'')+
  (t.exit_reason?'<br><span class="small">علت پایان: '+String(t.exit_reason)+'</span>':'')+'</div>';
 }
+async function updatePaperTradeLiveQuote(tradeId){
+ const t=paperTradesCache.find(x=>Number(x.id)===Number(tradeId));
+ if(!t||Number(paperChartSelectedTradeId)!==Number(tradeId)||!paperChart||!paperChartQuoteLine)return;
+ const status=document.getElementById("paper-chart-status");
+ try{
+  const d=await get("/api/quote?market="+encodeURIComponent(t.market)+"&symbol="+encodeURIComponent(t.symbol));
+  if(Number(paperChartSelectedTradeId)!==Number(tradeId)||!paperChartQuoteLine)return;
+  const q=d.quote||{},price=Number(q.price);
+  if(!q.available||!Number.isFinite(price)||price<=0)throw new Error(q.error||"قیمت زنده در دسترس نیست");
+  paperChartQuoteLine.applyOptions({price,title:"قیمت زنده"});
+  if(status)status.textContent="قیمت زنده: "+fmt(price)+" | "+(q.source||"منبع نامشخص")+" | آخرین دریافت: "+new Date().toLocaleTimeString("fa-IR")+(q.age_seconds!=null?" | سن داده: "+fmt(q.age_seconds)+" ثانیه":"");
+ }catch(e){
+  if(status)status.textContent="نمودار تاریخی نمایش داده می‌شود؛ دریافت قیمت زنده ناموفق بود: "+e.message;
+ }
+}
 async function showPaperTradeChart(id){
  const t=paperTradesCache.find(x=>Number(x.id)===Number(id));
  const status=document.getElementById("paper-chart-status"),title=document.getElementById("paper-chart-title"),el=document.getElementById("paper-trade-chart"),legend=document.getElementById("paper-trade-chart-legend");
  if(!t||!status||!el)return;
+ paperChartSelectedTradeId=Number(id);
+ if(paperChartQuoteTimer){clearInterval(paperChartQuoteTimer);paperChartQuoteTimer=null}
+ paperChartQuoteLine=null;
  title.textContent="نمودار "+t.symbol+" | معامله #"+t.id;
  status.textContent="در حال دریافت کندل‌های "+t.timeframe+"…";
  try{
   const d=await get("/api/analyze?market="+encodeURIComponent(t.market)+"&symbol="+encodeURIComponent(t.symbol)+"&timeframe="+encodeURIComponent(t.timeframe));
+  if(Number(paperChartSelectedTradeId)!==Number(id))return;
   if(paperChart){paperChart.remove();paperChart=null}
   if(paperChartResizeObserver){paperChartResizeObserver.disconnect();paperChartResizeObserver=null}
   el.innerHTML="";
@@ -705,7 +724,8 @@ async function showPaperTradeChart(id){
   paperChart=LightweightCharts.createChart(el,{width:Math.max(280,el.clientWidth||window.innerWidth-50),height:300,layout:{background:{color:"#0b172a"},textColor:"#cbd6e8",fontFamily:"Tahoma"},grid:{vertLines:{color:"#17253b"},horzLines:{color:"#17253b"}},rightPriceScale:{borderColor:"#405477"},timeScale:{borderColor:"#405477",timeVisible:true},localization:{locale:"en-US"}});
   const cs=paperChart.addCandlestickSeries({upColor:"#28c997",downColor:"#ff7182",borderVisible:false,wickUpColor:"#28c997",wickDownColor:"#ff7182"});
   cs.setData(d.chart_candles);
-  const items=[];
+  paperChartQuoteLine=cs.createPriceLine({price:Number(d.live_quote&&d.live_quote.price)||Number(t.last_quote_price)||Number(t.entry_price),color:"#38bdf8",lineWidth:2,lineStyle:LightweightCharts.LineStyle.Solid,axisLabelVisible:true,title:"قیمت زنده"});
+  const items=['<span class="legend-chip" style="border-color:#38bdf8">قیمت زنده</span>'];
   const add=(value,color,label)=>{const n=Number(value);if(!Number.isFinite(n)||n<=0)return;cs.createPriceLine({price:n,color,lineWidth:2,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:label});items.push('<span class="legend-chip" style="border-color:'+color+'">'+label+' '+fmt(n)+'</span>')};
   add(t.entry_price,"#facc15","ورود واقعی / فعال‌شدن");
   if(t.signal_entry!=null&&Math.abs(Number(t.signal_entry)-Number(t.entry_price))>1e-8)add(t.signal_entry,"#a78bfa","ورود پیشنهادی");
@@ -719,7 +739,9 @@ async function showPaperTradeChart(id){
   legend.innerHTML=items.join("");
   paperChart.timeScale().fitContent();
   if(typeof ResizeObserver!=="undefined"){paperChartResizeObserver=new ResizeObserver(()=>{if(paperChart&&el.clientWidth>0)paperChart.applyOptions({width:el.clientWidth})});paperChartResizeObserver.observe(el)}
-  status.textContent="محل ورود، حد ضرر و هدف‌ها روی نمودار مشخص شدند."+(activated?" زمان فعال‌شدن هم علامت‌گذاری شد.":" زمان دقیق فعال‌شدن برای این معامله قدیمی ذخیره نشده است.");
+  status.textContent="کندل‌ها و سطوح معامله آماده‌اند؛ در حال دریافت قیمت زنده…";
+  await updatePaperTradeLiveQuote(id);
+  paperChartQuoteTimer=setInterval(()=>updatePaperTradeLiveQuote(id),t.market==="crypto"?3000:30000);
  }catch(e){status.textContent="خطا: "+e.message}
 }
 async function refreshPaperTrading(){
