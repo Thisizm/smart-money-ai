@@ -378,9 +378,12 @@ def get_siftingio_silver_candles(timeframe):
         raise RuntimeError("SIFTINGIO_API_KEY در تنظیمات Render ثبت نشده است")
     intervals = {"5m": "5m", "15m": "15m", "1h": "1h", "4h": "1h", "1d": "1d", "1w": "1w"}
     interval = intervals[timeframe]
-    # Request enough history for the analysis engine; aggregate 1h bars to 4h.
+    # Request a window that fits the provider's 2,000-row cap.
+    # For 4h, fetch the latest 2,000 hourly bars (about 500 completed 4h bars).
+    # Asking for 8,000 hours with limit=2,000 and order=asc returned only the
+    # oldest page, which made the newest visible candle months out of date.
     bar_minutes = {"5m": 5, "15m": 15, "1h": 60, "4h": 60, "1d": 1440, "1w": 10080}[timeframe]
-    count = 2000 if timeframe != "4h" else 8000
+    count = 2000
     start_epoch = int(time.time()) - (bar_minutes * 60 * count)
     params = urllib.parse.urlencode({
         "start": datetime.fromtimestamp(start_epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
