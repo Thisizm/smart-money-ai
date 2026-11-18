@@ -2093,11 +2093,25 @@ def _build_coinmarketcap_keyless_dominance():
     if not total or total <= 0 or btc is None or eth is None:
         raise RuntimeError("CoinMarketCap global metrics missing total cap or BTC/ETH dominance")
 
-    # Global metrics already publishes USDT dominance. Use it directly:
-    # this avoids a second endpoint that may require an authenticated plan.
-    usdt = _as_float(global_data.get("usdt_dominance"))
-    if usdt is None:
-        raise RuntimeError("CoinMarketCap global metrics did not include USDT dominance")
+    # CMC global metrics exposes BTC/ETH dominance, but not USDT dominance.
+    # Fetch USDT's own market cap from the keyless quotes endpoint and divide
+    # it by the exact same CMC global total-market-cap denominator.
+    usdt_raw = fetch_json(
+        base + "/v3/cryptocurrency/quotes/latest?symbol=USDT&convert=USD",
+        timeout=15
+    )
+    usdt_data = (usdt_raw.get("data") or {}).get("USDT")
+    if isinstance(usdt_data, list):
+        usdt_asset = usdt_data[0] if usdt_data else {}
+    elif isinstance(usdt_data, dict):
+        usdt_asset = usdt_data
+    else:
+        usdt_asset = {}
+    usdt_quote = ((usdt_asset.get("quote") or {}).get("USD") or {})
+    usdt_market_cap = _as_float(usdt_quote.get("market_cap"))
+    if usdt_market_cap is None or usdt_market_cap <= 0:
+        raise RuntimeError("CoinMarketCap USDT quote did not include a valid market_cap")
+    usdt = (usdt_market_cap / total) * 100.0
     if not (0 <= btc <= 100 and 0 <= eth <= 100 and 0 <= usdt <= 100):
         raise RuntimeError("CoinMarketCap dominance values are outside valid range")
     return {
@@ -2106,6 +2120,7 @@ def _build_coinmarketcap_keyless_dominance():
         "others_ex_btc_eth_usdt": round(max(0.0, 100.0 - btc - eth - usdt), 4),
         "total_market_cap_usd": total,
         "total_volume_24h_usd": _as_float(quote.get("total_volume_24h")),
+        "usdt_market_cap_usd": usdt_market_cap,
         "updated_at": utc_now(),
         "source_updated_at": updated.isoformat() if updated else None,
         "source_age_seconds": max(0, int(time.time() - updated.timestamp())) if updated else None,
