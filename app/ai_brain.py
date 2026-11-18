@@ -216,7 +216,7 @@ def call_gemini(evidence):
 
 
 def validate_decision(result, live_quote=None, execution_quality=None):
-    """Downgrade unsafe or incomplete directional outputs to WAIT."""
+    """Validate active plans and both conditional breakout/retest scenarios."""
     result = dict(result or {})
     decision = str(result.get("decision", "WAIT")).upper()
     if decision not in ("BUY", "SELL", "WAIT"):
@@ -227,9 +227,6 @@ def validate_decision(result, live_quote=None, execution_quality=None):
     except (TypeError, ValueError):
         score = 0
     result["setup_quality"] = max(0, min(100, score))
-    if decision == "WAIT":
-        result.update({"entry_zone": None, "stop_loss": None, "targets": []})
-        return result
 
     def number(value):
         try:
@@ -238,11 +235,81 @@ def validate_decision(result, live_quote=None, execution_quality=None):
         except (TypeError, ValueError):
             return None
 
+    def clean_list(values):
+        return [n for n in (number(x) for x in (values or [])) if n is not None]
+
+    # Conditional plans are not active trades. Validate their geometry separately:
+    # a breakout/retest entry must remain close to its trigger, and targets must
+    # lie beyond the breakout level in the expected direction.
+    scenarios = result.get("conditional_scenarios")
+    if isinstance(scenarios, dict):
+        scenario_notes = []
+        for key, side in (("bullish", "BUY"), ("bearish", "SELL")):
+            plan = scenarios.get(key)
+            if not isinstance(plan, dict):
+                continue
+            trigger = number(plan.get("trigger_level"))
+            zone = plan.get("entry_zone") or {}
+            low, high = number(zone.get("low")), number(zone.get("high"))
+            stop = number(plan.get("stop_loss"))
+            targets = clean_list(plan.get("targets"))
+            valid_scenario = (
+                trigger is not None and low is not None and high is not None
+                and low <= high and stop is not None and len(targets) >= 2
+            )
+            if valid_scenario:
+                # A retest entry must intersect a narrow band around the trigger.
+                # 0.35% allows normal volatility while rejecting unrelated prices.
+                tolerance = trigger * 0.0035
+                near_trigger = high >= trigger - tolerance and low <= trigger + tolerance
+                midpoint = (low + high) / 2.0
+                risk = abs(midpoint - stop)
+                reward = abs(targets[0] - midpoint)
+                rr_ok = risk > 0 and reward / risk >= 1.2
+                if side == "BUY":
+                    valid_scenario = (
+                        near_trigger and stop < low
+                        and targets[0] > trigger and targets[1] > targets[0]
+                    )
+                else:
+                    valid_scenario = (
+                        near_trigger and stop > high
+                        and targets[0] < trigger and targets[1] < targets[0]
+                    )
+                valid_scenario = valid_scenario and rr_ok
+            if valid_scenario:
+                plan["trigger_level"] = trigger
+                plan["entry_zone"] = {"low": low, "high": high}
+                plan["stop_loss"] = stop
+                plan["targets"] = targets[:3]
+                plan["validation"] = "passed"
+            else:
+                # Keep the trigger/condition for context, but never display a
+                # numerically inconsistent entry plan as if it were actionable.
+                plan["entry_zone"] = None
+                plan["stop_loss"] = None
+                plan["targets"] = []
+                plan["validation"] = "rejected"
+                plan["validation_note"] = (
+                    "اعداد سناریو با تریگر، حدضرر، اهداف یا نسبت سود به زیان سازگار نبود؛ "
+                    "برای جلوگیری از نمایش ورود اشتباه، محدوده و اهداف حذف شدند."
+                )
+                scenario_notes.append(
+                    ("سناریوی خرید" if side == "BUY" else "سناریوی فروش")
+                    + " از کنترل سازگاری تریگر و ورود عبور نکرد."
+                )
+        if scenario_notes:
+            result.setdefault("conflicts", []).extend(scenario_notes)
+            result["scenario_validation_notes"] = scenario_notes
+
+    if decision == "WAIT":
+        result.update({"entry_zone": None, "stop_loss": None, "targets": []})
+        return result
+
     zone = result.get("entry_zone") or {}
     low, high = number(zone.get("low")), number(zone.get("high"))
     stop = number(result.get("stop_loss"))
-    targets = [number(x) for x in (result.get("targets") or [])]
-    targets = [x for x in targets if x is not None]
+    targets = clean_list(result.get("targets"))
     valid = low is not None and high is not None and low <= high and stop is not None and len(targets) >= 2
     if valid and decision == "BUY":
         valid = stop < low and all(x > high for x in targets[:2]) and targets[0] < targets[1]
