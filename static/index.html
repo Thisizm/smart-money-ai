@@ -111,10 +111,14 @@ async function get(url,opt){
 }
 async function loadOptions(){try{let d=await get("/api/options");if(Array.isArray(d.crypto)&&d.crypto.length){let current=document.getElementById("symbol").value;coins=d.crypto;symbols();if(coins.includes(current))document.getElementById("symbol").value=current;filterSymbols()}}catch(e){document.getElementById("coin-count").textContent="فهرست موقت Binance بارگذاری نشد؛ نمادهای پیش‌فرض نمایش داده شده‌اند."}}
 function metric(k,v){return '<div class="metric"><span class="muted">'+k+'</span><br><b>'+v+'</b></div>'}
-function renderLiveQuote(q){
+function renderLiveQuote(q,aligned=null){
  const el=document.getElementById("livequote");
- if(!q||!q.available){el.textContent="قیمت زنده در دسترس نیست؛ از قیمت کندل بسته‌شده به‌عنوان قیمت لحظه‌ای استفاده نکن.";return}
- el.textContent="قیمت زنده: "+fmt(q.price)+" | منبع: "+(q.source||"نامشخص")+" | نماد منبع: "+(q.source_symbol||"—")+" | زمان آخرین داده منبع: "+(q.source_timestamp||"نامشخص")+" | سن داده: "+(q.age_seconds==null?"نامشخص":q.age_seconds+" ثانیه")+" | "+(q.note||"")+(q.is_proxy?" | هشدار: قرارداد آتی/Proxy":"");
+ if(!q||!q.available){
+  if(el)el.textContent="قیمت زنده فعلاً دریافت نشد؛ قیمت آخرین کندل فقط مرجع تاریخی است و قیمت لحظه‌ای محسوب نمی‌شود.";
+  return;
+ }
+ const mismatch=aligned===false?" | هشدار: قیمت زنده با آخرین کندل/نماد منبع هم‌خوان نیست؛ قیمت زنده نمایش داده شده اما ورود جدید مسدود است.":"";
+ if(el)el.textContent="قیمت زنده: "+fmt(q.price)+" | منبع: "+(q.source||"نامشخص")+" | نماد منبع: "+(q.source_symbol||"—")+" | زمان آخرین داده منبع: "+(q.source_timestamp||"نامشخص")+" | سن داده: "+(q.age_seconds==null?"نامشخص":q.age_seconds+" ثانیه")+" | "+(q.note||"")+(q.is_proxy?" | هشدار: قرارداد آتی/Proxy":"")+mismatch;
  const livePriceCell=document.querySelector("#metrics .metric:first-child b");
  if(livePriceCell)livePriceCell.textContent=fmt(q.price);
 }
@@ -259,7 +263,7 @@ function renderChart(d){
   line(obZone.high,"#f59e0b","OB نزولی سقف",dashed,2,true);
  }
  const q=d.live_quote||{};
- if(q.available&&d.price_alignment?.aligned!==false&&(!d.chart_source_symbol||q.source_symbol===d.chart_source_symbol))livePriceLine=line(q.price,"#7dd3fc","قیمت زنده",LightweightCharts.LineStyle.Solid,1,true);
+ if(q.available&&(!d.chart_source_symbol||q.source_symbol===d.chart_source_symbol))livePriceLine=line(q.price,"#7dd3fc","قیمت زنده",LightweightCharts.LineStyle.Solid,1,true);
 
  if(d.signal==="BUY"||d.signal==="SELL"){
   line(levels.entry,"#28c997","ورود تحلیل اولیه",LightweightCharts.LineStyle.Solid,2,true);
@@ -331,13 +335,10 @@ async function refreshLiveQuote(){
   const aligned=deviation!=null&&deviation<=limit&&(!lastA.chart_source_symbol||!d.quote?.source_symbol||String(lastA.chart_source_symbol).replace(/[^A-Z0-9]/gi,"").toUpperCase()===String(d.quote.source_symbol).replace(/[^A-Z0-9]/gi,"").toUpperCase());
   lastA.live_quote=d.quote;
   lastA.price_alignment={aligned,candle_close:lastCandle,live_price:live,deviation_percent:deviation,max_deviation_percent:limit};
-  if(!aligned){
-   const box=document.getElementById("livequote");
-   if(box)box.textContent="هشدار: قیمت زنده با آخرین کندل این تایم‌فریم هم‌خوان نیست؛ قیمت روی نمودار نمایش داده نمی‌شود و ورود جدید مسدود است.";
-   return;
-  }
-  renderLiveQuote(d.quote);
-  if(livePriceLine&&d.quote&&d.quote.available){try{livePriceLine.applyOptions({price:d.quote.price})}catch(e){}}
+  renderLiveQuote(d.quote,aligned);
+  // A mismatch blocks entries, but must never hide the actual live quote.
+  const sameSource=!lastA.chart_source_symbol||!d.quote?.source_symbol||String(lastA.chart_source_symbol).replace(/[^A-Z0-9]/gi,"").toUpperCase()===String(d.quote.source_symbol).replace(/[^A-Z0-9]/gi,"").toUpperCase();
+  if(livePriceLine&&d.quote&&d.quote.available&&sameSource){try{livePriceLine.applyOptions({price:d.quote.price})}catch(e){}}
  }catch(e){document.getElementById("livequote").textContent="به‌روزرسانی قیمت زنده ناموفق بود: "+e.message}
 }
 
@@ -350,7 +351,7 @@ function showA(d){
  const q=d.live_quote||{},a=d.advanced_analysis||{},v=a.volatility||{},adx=a.adx||{},mom=a.momentum||{},vp=a.volume_profile||{},liq=a.liquidity_map||{},pd=a.premium_discount||{},macd=a.macd||{},der=d.derivatives||{},ob=d.order_block_approx||{};
  renderLiveQuote(q);
  document.getElementById("metrics").innerHTML=
- metric("قیمت زنده",q.available?fmt(q.price):fmt(d.analysis_price??d.price))+
+ metric(q.available?"قیمت زنده":"قیمت آخرین کندل (غیرزنده)",q.available?fmt(q.price):fmt(d.analysis_price??d.price))+
  metric("ورود تحلیل اولیه",fmt(d.entry_price))+
  metric("حد ضرر اولیه",fmt(d.stop_loss))+
  metric("هدف اول اولیه",fmt(d.take_profit_1));
