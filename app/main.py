@@ -1,5 +1,7 @@
 import os
 import json
+import re
+import html
 import sqlite3
 import urllib.parse
 import urllib.request
@@ -49,7 +51,6 @@ SIFTINGIO_API_KEY = os.getenv("SIFTINGIO_API_KEY", "")
 ALLOW_METAL_FUTURES_PROXY = os.getenv("ALLOW_METAL_FUTURES_PROXY", "false").lower() in ("1", "true", "yes")
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "")
 COINMARKETCAP_API_KEY = os.getenv("COINMARKETCAP_API_KEY", "")
-COINRANKING_API_KEY = os.getenv("COINRANKING_API_KEY", "")
 FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 AI_API_KEY = os.getenv("AI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -1413,7 +1414,7 @@ def status():
             "crypto_derivatives": "Binance public futures funding/OI/long-short + spot order-book snapshot",
             "metals_prices": "Twelve Data spot when entitled; Yahoo spot fallback only. COMEX futures proxy is disabled unless ALLOW_METAL_FUTURES_PROXY=true.",
             "metal_instrument_note": "Spot and futures are never mixed by default. If no spot feed is available, the metal analysis returns unavailable instead of silently substituting a futures contract.",
-            "crypto_dominance": "Coinranking global stats + aggregated ETH/USDT market caps; no silent CoinGecko/CoinMarketCap fallback",
+            "crypto_dominance": "JustScreener live USDT dominance page; no silent provider fallback",
             "liquidation_heatmap": "غیرفعال؛ خوشه‌های تخمینی از امتیازدهی و رابط حذف شدند",
             "global_news": "GDELT DOC 2.0",
             "macro_indicators": "FRED " + ("configured" if FRED_API_KEY else "key_required"),
@@ -2312,75 +2313,55 @@ def _dominance_history_payload(current):
     }
 
 
-def _build_coinranking_dominance():
-    """Build BTC/ETH/USDT dominance from Coinranking using one shared total-cap denominator."""
-    if not COINRANKING_API_KEY:
-        raise RuntimeError("COINRANKING_API_KEY در تنظیمات Render ثبت نشده است")
-
-    headers = {"x-access-token": COINRANKING_API_KEY}
-    stats_raw = fetch_json("https://api.coinranking.com/v2/stats", headers=headers, timeout=15)
-    stats_data = stats_raw.get("data") or {}
-    total = _as_float(stats_data.get("totalMarketCap"))
-    btc = _as_float(stats_data.get("btcDominance"))
-    if not total or total <= 0 or btc is None or not (0 <= btc <= 100):
-        raise RuntimeError("Coinranking global stats returned invalid total market cap or BTC dominance")
-
-    # Coinranking UUIDs: ETH=razxDUgYGNAdQ, USDT=HIVsRcGKkPFtW.
-    coins_raw = fetch_json(
-        "https://api.coinranking.com/v2/coins?uuids%5B%5D=razxDUgYGNAdQ&uuids%5B%5D=HIVsRcGKkPFtW&limit=2",
-        headers=headers, timeout=15
-    )
-    coins = (coins_raw.get("data") or {}).get("coins") or []
-    caps = {str(item.get("symbol") or "").upper(): _as_float(item.get("marketCap")) for item in coins}
-    eth_cap, usdt_cap = caps.get("ETH"), caps.get("USDT")
-    if eth_cap is None or usdt_cap is None or eth_cap <= 0 or usdt_cap <= 0:
-        raise RuntimeError("Coinranking did not return valid ETH and USDT market caps")
-
-    eth = eth_cap / total * 100.0
-    usdt = usdt_cap / total * 100.0
-    if not (0 <= eth <= 100 and 0 <= usdt <= 100):
-        raise RuntimeError("Coinranking ETH/USDT dominance values are outside valid range")
-
-    now_iso = utc_now()
+def _build_justscreener_dominance():
+    """Read the published USDT.D value from JustScreener server-rendered analytics."""
+    url = "https://justscreener.com/en/analytics/usdt-dominance"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; SmartMoneyAI/2.0)", "Accept": "text/html,application/xhtml+xml"})
+    try:
+        with urllib.request.urlopen(req, timeout=18) as response:
+            page = response.read().decode("utf-8", "ignore")
+    except Exception as exc:
+        raise RuntimeError("JustScreener page fetch failed: " + str(exc)[:140])
+    visible = html.unescape(re.sub(r"<[^>]*>", " ", page))
+    visible = re.sub(r"\s+", " ", visible)
+    usdt_match = re.search(r"USDT\s+dominance\s+(\d+(?:\.\d+)?)\s*%", visible, re.I)
+    btc_match = re.search(r"BTC\.D\s+(\d+(?:\.\d+)?)\s*%", visible, re.I)
+    eth_match = re.search(r"ETH\.D\s+(\d+(?:\.\d+)?)\s*%", visible, re.I)
+    if not usdt_match:
+        raise RuntimeError("JustScreener page did not expose a readable USDT dominance value")
+    usdt = float(usdt_match.group(1))
+    btc = float(btc_match.group(1)) if btc_match else None
+    eth = float(eth_match.group(1)) if eth_match else None
+    if not (0 < usdt < 100):
+        raise RuntimeError("JustScreener returned an invalid USDT dominance value")
+    if btc is not None and not (0 < btc < 100): btc = None
+    if eth is not None and not (0 < eth < 100): eth = None
     return {
-        "available": True,
-        "btc": round(btc, 4),
-        "eth": round(eth, 4),
-        "usdt": round(usdt, 4),
-        "others_ex_btc_eth_usdt": round(max(0.0, 100.0 - btc - eth - usdt), 4),
-        "total_market_cap_usd": total,
-        "total_volume_24h_usd": _as_float(stats_data.get("total24hVolume")),
-        "eth_market_cap_usd": eth_cap,
-        "usdt_market_cap_usd": usdt_cap,
-        "updated_at": now_iso,
-        "source_updated_at": None,
-        "source_age_seconds": None,
-        "source": "Coinranking global stats + ETH/USDT market caps",
-        "methodology": "coinranking_common_denominator",
-        "stale": False,
-        "fallback_used": False,
-        "note": (
-            "BTC.D مستقیماً از آمار جهانی Coinranking گرفته می‌شود؛ ETH.D و USDT.D از ارزش بازار هر دارایی "
-            "تقسیم بر ارزش کل همان منبع محاسبه می‌شوند. هر سه از مخرج یکسان استفاده می‌کنند. "
-            "این منبع مستقل از TradingView CRYPTOCAP است و ممکن است به‌دلیل تفاوت پوشش بازار و عرضه در گردش اختلاف داشته باشد."
-        )
+        "available": True, "btc": round(btc, 4) if btc is not None else None,
+        "eth": round(eth, 4) if eth is not None else None, "usdt": round(usdt, 4),
+        "others_ex_btc_eth_usdt": round(max(0.0, 100.0 - btc - eth - usdt), 4) if btc is not None and eth is not None else None,
+        "total_market_cap_usd": None, "total_volume_24h_usd": None,
+        "updated_at": utc_now(), "source_updated_at": None, "source_age_seconds": None,
+        "source": "JustScreener USDT dominance analytics",
+        "methodology": "justscreener_published_usdt_share",
+        "stale": False, "fallback_used": False,
+        "note": "USDT.D مستقیماً از عدد منتشرشده در صفحه تحلیل JustScreener خوانده می‌شود؛ سایت اعلام کرده داده چند بار در ساعت به‌روزرسانی می‌شود. اختلاف جزئی با TradingView ممکن است به‌دلیل زمان به‌روزرسانی و سبد بازار باشد."
     }
-
 
 @app.get("/api/dominance")
 def dominance():
     now = time.time()
     with DOMINANCE_LOCK:
         cached = DOMINANCE_CACHE.get("data")
-        # Free Coinranking allowance: cache provider data for 10 minutes.
-        if cached and now - DOMINANCE_CACHE.get("at", 0) < 600:
+        # JustScreener states its market-share page refreshes several times per hour.
+        if cached and now - DOMINANCE_CACHE.get("at", 0) < 120:
             result = dict(cached)
             result["cache_hit"] = True
             result["usdt_trend"] = _dominance_history_payload(result)
             return result
 
         try:
-            result = _build_coinranking_dominance()
+            result = _build_justscreener_dominance()
             DOMINANCE_CACHE.update({"at": now, "data": result})
             _record_dominance_snapshot(result, now)
             result["cache_hit"] = False
@@ -2393,11 +2374,11 @@ def dominance():
                 result["stale"] = True
                 result["cache_hit"] = True
                 result["cache_age_seconds"] = max(0, int(now - DOMINANCE_CACHE.get("at", now)))
-                result["warning"] = "Coinranking موقتاً پاسخ نداد؛ آخرین داده Coinranking نمایش داده می‌شود."
+                result["warning"] = "JustScreener موقتاً پاسخ نداد؛ آخرین داده همان منبع نمایش داده می‌شود."
                 result["errors"] = [str(exc)[:180]]
                 result["usdt_trend"] = _dominance_history_payload(result)
                 return result
-            raise HTTPException(502, "داده دامیننس از Coinranking دریافت نشد: " + str(exc)[:180])
+            raise HTTPException(502, "داده دامیننس از JustScreener دریافت نشد: " + str(exc)[:180])
 
 
 def _normalize_liquidation_side(value):
