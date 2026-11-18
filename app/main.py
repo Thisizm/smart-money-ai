@@ -421,8 +421,12 @@ def get_twelve_data_metals_candles(symbol, timeframe):
     if not provider_symbol:
         raise RuntimeError("Unsupported Twelve Data metal symbol")
     tf = TIMEFRAMES[timeframe]
+    # Metals were previously hard-limited to 250 candles, making every gold
+    # chart look like it had almost no history. Request a larger but bounded
+    # window; Twelve Data may still return fewer bars according to the API plan.
+    metal_history_limit = max(250, min(int(os.getenv("METAL_HISTORICAL_CANDLE_LIMIT", "1000")), 5000))
     params = urllib.parse.urlencode({
-        "symbol": provider_symbol, "interval": tf["twelve"], "outputsize": 250,
+        "symbol": provider_symbol, "interval": tf["twelve"], "outputsize": metal_history_limit,
         "apikey": TWELVE_DATA_API_KEY, "format": "JSON", "timezone": "UTC"
     })
     data = fetch_json("https://api.twelvedata.com/time_series?" + params, timeout=20)
