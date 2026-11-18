@@ -53,7 +53,7 @@ def _extract_json(text):
             raw = raw[4:].strip()
     start, end = raw.find("{"), raw.rfind("}")
     if start < 0 or end <= start:
-        raise RuntimeError("Gemini پاسخ JSON معتبر برنگرداند")
+        raise RuntimeError("مدل پاسخ JSON معتبر برنگرداند")
     return json.loads(raw[start:end + 1])
 
 
@@ -274,6 +274,26 @@ def validate_decision(result, live_quote=None, execution_quality=None):
 DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
 
+def _openrouter_text(value):
+    """Normalize the text shapes returned by OpenRouter chat completions."""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        chunks = []
+        for part in value:
+            if isinstance(part, str):
+                chunks.append(part)
+            elif isinstance(part, dict):
+                text_value = part.get("text")
+                if isinstance(text_value, str) and text_value.strip():
+                    chunks.append(text_value)
+        return "\n".join(chunks).strip()
+    if isinstance(value, dict):
+        text_value = value.get("text")
+        return text_value.strip() if isinstance(text_value, str) else ""
+    return ""
+
+
 def call_openrouter(evidence):
     """Primary free-tier reasoning model through OpenRouter; deterministic validation stays downstream."""
     api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
@@ -284,7 +304,7 @@ def call_openrouter(evidence):
         "model": model,
         "messages": [{"role": "user", "content": build_prompt(evidence)}],
         "temperature": 0.15,
-        "max_tokens": 2400
+        "max_tokens": 3600
     }).encode("utf-8")
     request = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",
@@ -298,26 +318,58 @@ def call_openrouter(evidence):
         method="POST"
     )
     try:
-        with urllib.request.urlopen(request, timeout=90) as response:
+        with urllib.request.urlopen(request, timeout=120) as response:
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "ignore")[:1000]
         if exc.code in (401, 403):
             raise RuntimeError("کلید OpenRouter معتبر نیست یا دسترسی ندارد: " + detail)
         if exc.code == 429:
-            raise RuntimeError("محدودیت درخواست رایگان OpenRouter فعال شده است؛ کمی بعد دوباره تلاش کن. " + detail)
+            raise RuntimeError("OpenRouter محدودیت درخواست یا سهمیه را برگرداند (429). جزئیات: " + detail)
         if exc.code in (502, 503, 504):
-            raise RuntimeError("مدل رایگان OpenRouter موقتاً در دسترس نیست. " + detail)
+            raise RuntimeError("مدل رایگان OpenRouter موقتاً در دسترس نیست. جزئیات: " + detail)
         raise RuntimeError("خطای OpenRouter HTTP " + str(exc.code) + ": " + detail)
+    except (socket.timeout, TimeoutError) as exc:
+        raise RuntimeError("پاسخ OpenRouter بیش از زمان مجاز طول کشید؛ این خطا به‌تنهایی نشانه اتمام سهمیه نیست.") from exc
+
+    if not isinstance(data, dict):
+        raise RuntimeError("ساختار پاسخ OpenRouter معتبر نیست")
+    if isinstance(data.get("error"), dict):
+        err = data["error"]
+        message = str(err.get("message") or err.get("code") or "خطای نامشخص")
+        raise RuntimeError("OpenRouter خطا را داخل پاسخ برگرداند: " + message[:700])
+
     choices = data.get("choices") or []
-    content = ((choices[0].get("message") or {}).get("content") if choices else None)
-    if isinstance(content, list):
-        content = "\n".join(
-            part.get("text", "") for part in content if isinstance(part, dict)
+    choice = choices[0] if choices and isinstance(choices[0], dict) else {}
+    message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+    content = _openrouter_text(message.get("content"))
+    if not content:
+        # Do not expose hidden reasoning or raw provider payloads to the user.
+        finish = choice.get("finish_reason") or choice.get("native_finish_reason") or "نامشخص"
+        provider = data.get("provider") or "نامشخص"
+        returned_model = data.get("model") or model
+        message_keys = ",".join(sorted(str(k) for k in message.keys())) or "ندارد"
+        if finish == "length":
+            hint = "؛ احتمالاً سقف خروجی مدل پر شده است"
+        elif message.get("refusal"):
+            hint = "؛ مدل درخواست را رد کرده است"
+        elif message.get("tool_calls"):
+            hint = "؛ مدل به‌جای متن، درخواست ابزار برگردانده است"
+        else:
+            hint = ""
+        raise RuntimeError(
+            "OpenRouter متن نهایی برنگرداند (finish_reason=" + str(finish) +
+            ", provider=" + str(provider) + ", model=" + str(returned_model) +
+            ", message_fields=" + message_keys + ")" + hint
         )
-    if not content or not str(content).strip():
-        raise RuntimeError("OpenRouter پاسخ متنی قابل استفاده نداد")
-    result = _extract_json(str(content))
+
+    try:
+        result = _extract_json(content)
+    except (ValueError, TypeError) as exc:
+        preview = content[:240].replace("\n", " ")
+        raise RuntimeError(
+            "مدل پاسخ داد اما JSON قابل‌خواندن نبود؛ ابتدای پاسخ: " + preview
+        ) from exc
     if not isinstance(result, dict):
         raise RuntimeError("ساختار پاسخ هوش مصنوعی معتبر نیست")
     result["provider"] = "OpenRouter"
