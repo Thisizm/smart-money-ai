@@ -1580,6 +1580,44 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     result["live_quote"] = get_live_quote(market, symbol)
     _set_analysis_progress(request_id, "derivatives", "دریافت Funding، Open Interest، نسبت خریدار/فروشنده و دفتر سفارش Binance (فقط کریپتو)")
     quote = result["live_quote"]
+    # Compare the live quote with the most recent completed candle from the
+    # exact requested market/symbol/timeframe before exposing trade levels.
+    closed_for_alignment = completed_candles(candles, timeframe)
+    candle_close = float(closed_for_alignment[-1]["close"]) if closed_for_alignment else None
+    live_value_for_alignment = float(quote["price"]) if quote.get("available") and quote.get("price") is not None else None
+    deviation_percent = (
+        abs(live_value_for_alignment - candle_close) / candle_close * 100
+        if live_value_for_alignment is not None and candle_close and candle_close > 0 else None
+    )
+    max_deviation_percent = 5.0 if market == "crypto" else 2.5
+    normalize_symbol = lambda value: re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+    candle_symbol = (closed_for_alignment[-1].get("source_symbol") if closed_for_alignment else None) or symbol
+    quote_symbol = quote.get("source_symbol")
+    symbol_match = (
+        not quote_symbol or not candle_symbol
+        or normalize_symbol(quote_symbol) == normalize_symbol(candle_symbol)
+    )
+    price_aligned = bool(
+        live_value_for_alignment is not None
+        and deviation_percent is not None
+        and deviation_percent <= max_deviation_percent
+        and symbol_match
+    )
+    result["price_alignment"] = {
+        "aligned": price_aligned,
+        "candle_close": candle_close,
+        "live_price": live_value_for_alignment,
+        "deviation_percent": round(deviation_percent, 3) if deviation_percent is not None else None,
+        "max_deviation_percent": max_deviation_percent,
+        "candle_source_symbol": candle_symbol,
+        "quote_source_symbol": quote_symbol,
+        "symbol_match": symbol_match,
+        "note": (
+            "قیمت زنده با آخرین کندل بسته‌شده هم‌خوان است."
+            if price_aligned else
+            "قیمت زنده با آخرین کندل یا نماد منبع هم‌خوان نیست؛ تا دریافت داده هماهنگ، ورود و سیگنال جدید مسدود است."
+        )
+    }
     smart = result.get("smart_entry") or {}
     for side in ("long", "short"):
         plan = smart.get(side)
@@ -1587,7 +1625,8 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
             continue
         # Closed-candle reaction is necessary but not sufficient: require a fresh,
         # non-proxy quote still trading inside the proposed zone before confirmation.
-        quote_fresh = bool(quote.get("available") and not quote.get("is_proxy")
+        quote_fresh = bool(result["price_alignment"]["aligned"]
+                           and quote.get("available") and not quote.get("is_proxy")
                            and quote.get("age_seconds") is not None
                            and quote.get("age_seconds") <= (120 if market == "crypto" else 900))
         live_price = quote.get("price")
@@ -1648,6 +1687,11 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
                           and result["live_quote"].get("age_seconds") <= quote_age_limit)
     execution_flags = []
     execution_blocked = False
+    if not result["price_alignment"]["aligned"]:
+        execution_flags.append(
+            "BLOCK: قیمت زنده با آخرین کندل بسته‌شده یا نماد منبع اختلاف غیرعادی دارد؛ ورود تا هماهنگ‌شدن داده‌ها مسدود است"
+        )
+        execution_blocked = True
     if not quote_is_fresh:
         execution_flags.append("BLOCK: قیمت زنده ناموجود یا قدیمی است؛ ورود جدید مجاز نیست")
         execution_blocked = True
