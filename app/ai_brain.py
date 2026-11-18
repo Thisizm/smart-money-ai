@@ -18,7 +18,8 @@ DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 
 def build_prompt(evidence):
     return (
-        "تو مغز تحلیل‌گر اصلی یک سامانه تصمیم‌یار بازار هستی. فقط از شواهد JSON استفاده کن؛ "
+        "تو تحلیل‌گر اصلی بازار هستی. فقط از JSON شواهد استفاده کن و هیچ داده‌ای نساز. "
+        "پاسخ نهایی را کوتاه، دقیق و فقط به شکل یک JSON معتبر تولید کن؛ استدلال طولانی ننویس. "
         "هیچ قیمت، اندیکاتور، خبر، رویداد یا داده‌ای را حدس نزن. اگر فیلدی null، unavailable یا error است، "
         "آن را داده ناموجود اعلام کن و جایگزین نساز. منابع و زمان/تازگی داده را در کیفیت داده مشخص کن. "
         "تمام تایم‌فریم‌های موجود را بخوان؛ تایم‌فریم بالاتر جهت زمینه‌ای و تایم‌فریم پایین‌تر زمان ورود را می‌دهد. "
@@ -40,7 +41,9 @@ def build_prompt(evidence):
         "conflicts:[string], risk_flags:[string], data_quality:[string], "
         "setup_quality:integer}. setup_quality فقط امتیاز کیفیت شواهد از 0 تا 100 است، نه احتمال برد. "
         "اگر WAIT است، سطوح ورود/حدضرر/اهداف را null یا آرایه خالی قرار بده. "
-        "زبان تمام متن‌ها فارسی باشد. شواهد JSON:\\n"
+        "زبان تمام متن‌ها فارسی باشد. summary حداکثر ۲ جمله، هر فهرست حداکثر ۴ مورد، "
+        "entry_trigger و invalidation هرکدام حداکثر ۱ جمله باشند. فقط کلیدهای خواسته‌شده را برگردان. "
+        "شواهد JSON:\\n"
         + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), default=str)
     )
 
@@ -303,8 +306,11 @@ def call_openrouter(evidence):
     body = json.dumps({
         "model": model,
         "messages": [{"role": "user", "content": build_prompt(evidence)}],
-        "temperature": 0.15,
-        "max_tokens": 3600
+        "temperature": 0.1,
+        # Keep internal reasoning from consuming the entire completion budget.
+        # OpenRouter counts reasoning tokens inside max_tokens for this endpoint.
+        "reasoning": {"max_tokens": 1200, "exclude": True},
+        "max_tokens": 6000
     }).encode("utf-8")
     request = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",
