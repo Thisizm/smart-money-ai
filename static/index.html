@@ -147,7 +147,7 @@ function renderSmartEntryChart(d,plan,side){
  const add=(value,color,title)=>{if(value==null||!Number.isFinite(Number(value)))return;cs.createPriceLine({price:Number(value),color,lineWidth:2,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title});lines.push('<span class="legend-chip" style="border-color:'+color+'">'+title+' '+fmt(Number(value))+'</span>')};
  if(plan){add(plan.zone?.low,"#38bdf8","کف ناحیه");add(plan.zone?.high,"#38bdf8","سقف ناحیه");add(plan.entry,"#facc15","قیمت ورود هوشمند");add(plan.stop_loss,"#fb7185","حد ضرر");(plan.targets||[]).forEach((x,i)=>add(x,"#4ade80","هدف "+(i+1)));}
  else{lines.push('<span class="small">برای این تحلیل محدوده ورود هوشمند معتبری وجود ندارد.</span>');}
- const q=d.live_quote||{};if(q.available)add(q.price,"#7dd3fc","قیمت زنده");
+ const q=d.live_quote||{};if(q.available&&d.price_alignment?.aligned!==false)add(q.price,"#7dd3fc","قیمت زنده");
  legend.innerHTML=lines.join("");smartEntryChart.timeScale().fitContent();
  if(typeof ResizeObserver!=="undefined"){smartEntryResizeObserver=new ResizeObserver(()=>{if(smartEntryChart&&el.clientWidth>0)smartEntryChart.applyOptions({width:el.clientWidth})});smartEntryResizeObserver.observe(el)}
 }
@@ -259,7 +259,7 @@ function renderChart(d){
   line(obZone.high,"#f59e0b","OB نزولی سقف",dashed,2,true);
  }
  const q=d.live_quote||{};
- if(q.available&&(!d.chart_source_symbol||q.source_symbol===d.chart_source_symbol))livePriceLine=line(q.price,"#7dd3fc","قیمت زنده",LightweightCharts.LineStyle.Solid,1,true);
+ if(q.available&&d.price_alignment?.aligned!==false&&(!d.chart_source_symbol||q.source_symbol===d.chart_source_symbol))livePriceLine=line(q.price,"#7dd3fc","قیمت زنده",LightweightCharts.LineStyle.Solid,1,true);
 
  if(d.signal==="BUY"||d.signal==="SELL"){
   line(levels.entry,"#28c997","ورود تحلیل اولیه",LightweightCharts.LineStyle.Solid,2,true);
@@ -325,8 +325,19 @@ async function refreshLiveQuote(){
  if(!lastA||!currentAnalysisMarket||!currentAnalysisSymbol)return;
  try{
   const d=await get("/api/quote?market="+currentAnalysisMarket+"&symbol="+encodeURIComponent(currentAnalysisSymbol));
-  lastA.live_quote=d.quote;renderLiveQuote(d.quote);
-  if(livePriceLine&&d.quote&&d.quote.available&&(!lastA.chart_source_symbol||d.quote.source_symbol===lastA.chart_source_symbol)){try{livePriceLine.applyOptions({price:d.quote.price})}catch(e){}}
+  const candles=lastA.chart_candles||[],lastCandle=candles.length?Number(candles[candles.length-1].close):null;
+  const live=Number(d.quote?.price),limit=currentAnalysisMarket==="crypto"?5:2.5;
+  const deviation=lastCandle>0&&Number.isFinite(live)?Math.abs(live-lastCandle)/lastCandle*100:null;
+  const aligned=deviation!=null&&deviation<=limit&&(!lastA.chart_source_symbol||!d.quote?.source_symbol||String(lastA.chart_source_symbol).replace(/[^A-Z0-9]/gi,"").toUpperCase()===String(d.quote.source_symbol).replace(/[^A-Z0-9]/gi,"").toUpperCase());
+  lastA.live_quote=d.quote;
+  lastA.price_alignment={aligned,candle_close:lastCandle,live_price:live,deviation_percent:deviation,max_deviation_percent:limit};
+  if(!aligned){
+   const box=document.getElementById("livequote");
+   if(box)box.textContent="هشدار: قیمت زنده با آخرین کندل این تایم‌فریم هم‌خوان نیست؛ قیمت روی نمودار نمایش داده نمی‌شود و ورود جدید مسدود است.";
+   return;
+  }
+  renderLiveQuote(d.quote);
+  if(livePriceLine&&d.quote&&d.quote.available){try{livePriceLine.applyOptions({price:d.quote.price})}catch(e){}}
  }catch(e){document.getElementById("livequote").textContent="به‌روزرسانی قیمت زنده ناموفق بود: "+e.message}
 }
 
@@ -385,7 +396,12 @@ async function analyze(){
  const pollTimer=setInterval(poll,900);
  try{
   const d=await get("/api/analyze?market="+m+"&symbol="+encodeURIComponent(x)+"&timeframe="+t+"&request_id="+encodeURIComponent(rid));
-  pollStop=true;clearInterval(pollTimer);showA(d);let q=d.live_quote||{};
+  pollStop=true;clearInterval(pollTimer);
+  if(m!==market.value||x!==symbol.value||t!==tf.value){
+   s.textContent="نتیجه قدیمی کنار گذاشته شد؛ چون نماد یا تایم‌فریم هنگام تحلیل تغییر کرده بود. دوباره تحلیل بگیر.";
+   return;
+  }
+  showA(d);let q=d.live_quote||{};
   const total=d.analysis_performance_ms==null?"":(" | زمان کل پردازش سرور: "+(d.analysis_performance_ms/1000).toFixed(2)+" ثانیه");
   s.textContent=(q.available?"تحلیل کندل بسته‌شده | قیمت زنده: "+fmt(q.price)+" | "+q.source+" | تأخیر منبع: "+(q.age_seconds==null?"نامشخص":q.age_seconds+" ثانیه")+(q.is_proxy?" | قیمت آتی/Proxy":""):"تحلیل دریافت شد، اما قیمت زنده در دسترس نیست؛ قیمت کندل را قیمت لحظه‌ای فرض نکن.")+total;
   const diag=document.createElement("details");diag.className="item";
