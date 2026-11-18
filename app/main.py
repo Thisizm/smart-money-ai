@@ -4,6 +4,7 @@ import sqlite3
 import urllib.parse
 import urllib.request
 import urllib.error
+import gzip
 import hmac
 import math
 import time
@@ -44,6 +45,7 @@ def _database_path():
 DB_PATH = _database_path()
 
 TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
+SIFTINGIO_API_KEY = os.getenv("SIFTINGIO_API_KEY", "")
 ALLOW_METAL_FUTURES_PROXY = os.getenv("ALLOW_METAL_FUTURES_PROXY", "false").lower() in ("1", "true", "yes")
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "")
 COINMARKETCAP_API_KEY = os.getenv("COINMARKETCAP_API_KEY", "")
@@ -364,6 +366,53 @@ def get_yahoo_metals_candles(market, timeframe):
     raise RuntimeError("Yahoo Finance symbols failed: " + " | ".join(ticker_errors))
 
 
+
+def get_siftingio_silver_candles(timeframe):
+    """Fetch aggregated XAGUSD commodity OHLCV bars from SiftingIO."""
+    if not SIFTINGIO_API_KEY:
+        raise RuntimeError("SIFTINGIO_API_KEY در تنظیمات Render ثبت نشده است")
+    intervals = {"5m": "5m", "15m": "15m", "1h": "1h", "4h": "1h", "1d": "1d", "1w": "1w"}
+    interval = intervals[timeframe]
+    # Request enough history for the analysis engine; aggregate 1h bars to 4h.
+    bar_minutes = {"5m": 5, "15m": 15, "1h": 60, "4h": 60, "1d": 1440, "1w": 10080}[timeframe]
+    count = 2000 if timeframe != "4h" else 8000
+    start_epoch = int(time.time()) - (bar_minutes * 60 * count)
+    params = urllib.parse.urlencode({
+        "start": datetime.fromtimestamp(start_epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "end": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "interval": interval, "limit": 2000, "order": "asc"
+    })
+    url = "https://api.sifting.io/v1/hist/commodities/XAGUSD/bars?" + params
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "SmartMoneyAI/2.3",
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip",
+        "X-API-Key": SIFTINGIO_API_KEY
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=25) as response:
+            raw = response.read()
+            if response.headers.get("Content-Encoding", "").lower() == "gzip":
+                raw = gzip.decompress(raw)
+            data = json.loads(raw.decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "ignore")
+        raise RuntimeError("SiftingIO HTTP " + str(exc.code) + ": " + body[:180])
+    rows = data.get("data") or []
+    candles = [{
+        "time": int(row["t"]), "open": float(row["o"]), "high": float(row["h"]),
+        "low": float(row["l"]), "close": float(row["c"]), "volume": float(row.get("v") or 0),
+        "source": "SiftingIO aggregated commodity reference",
+        "source_symbol": "XAGUSD"
+    } for row in rows if all(row.get(k) is not None for k in ("t", "o", "h", "l", "c"))]
+    if timeframe == "4h":
+        candles = aggregate_candles(candles, "4h")
+    candles = candles[-250:]
+    if len(candles) < 60:
+        raise RuntimeError("SiftingIO returned only " + str(len(candles)) + " usable candles for " + timeframe)
+    return candles
+
+
 def get_twelve_data_metals_candles(symbol, timeframe):
     """Fetch spot precious-metal candles from Twelve Data as the primary metals source."""
     if not TWELVE_DATA_API_KEY:
@@ -505,8 +554,28 @@ def get_live_quote(market, symbol):
             errors.append("Binance ticker: " + str(exc)[:140])
 
     elif market in METALS:
-        # Prefer Twelve Data spot quotes for both metals; never route metals through Binance.
-        if TWELVE_DATA_API_KEY:
+        # SiftingIO is the primary silver reference quote; gold remains on Twelve Data.
+        if market == "silver" and SIFTINGIO_API_KEY:
+            try:
+                data = fetch_json(
+                    "https://api.sifting.io/v1/last/trade/commodities/XAGUSD",
+                    headers={"X-API-Key": SIFTINGIO_API_KEY}, timeout=12
+                )
+                price = float(data["p"])
+                stamp_ms = int(data.get("t") or now * 1000)
+                result = {
+                    "available": True, "price": price,
+                    "source": "SiftingIO aggregated commodity reference",
+                    "source_symbol": "XAGUSD",
+                    "source_timestamp": datetime.fromtimestamp(stamp_ms / 1000, tz=timezone.utc).isoformat(),
+                    "age_seconds": max(0, int(now - stamp_ms / 1000)),
+                    "is_proxy": False,
+                    "note": "قیمت مرجع تجمیعی نقره از SiftingIO؛ ممکن است با فید CAPITALCOM در TradingView تفاوت داشته باشد."
+                }
+            except Exception as exc:
+                errors.append("SiftingIO trade: " + str(exc)[:140])
+        # Twelve Data remains the primary quote source for gold and fallback for silver.
+        if result is None and TWELVE_DATA_API_KEY:
             try:
                 provider_symbol = TWELVE_DATA_METAL_SYMBOLS[symbol]
                 params = urllib.parse.urlencode({
@@ -590,19 +659,24 @@ def _fetch_candles_uncached(market, symbol, timeframe):
     if market in METALS:
         if symbol != METALS[market]:
             raise HTTPException(400, "نماد فلز نامعتبر است")
+        if market == "silver" and SIFTINGIO_API_KEY:
+            try:
+                return get_siftingio_silver_candles(timeframe)
+            except Exception as sifting_exc:
+                sifting_error = str(sifting_exc)[:180]
+        else:
+            sifting_error = "SIFTINGIO_API_KEY تنظیم نشده است"
         try:
-            # Twelve Data is the primary source for BOTH gold and silver spot candles.
             return get_twelve_data_metals_candles(symbol, timeframe)
         except Exception as twelve_exc:
             try:
-                # Yahoo Finance is a no-key fallback; source and possible delay are labelled.
                 return get_yahoo_metals_candles(market, timeframe)
             except Exception as yahoo_exc:
                 raise HTTPException(
                     502,
-                    "دریافت کندل اسپات فلز از Twelve Data ناموفق بود (" +
-                    str(twelve_exc)[:130] + "). منبع جایگزین Yahoo Finance نیز در دسترس نیست (" +
-                    str(yahoo_exc)[:130] + ")."
+                    "دریافت کندل نقره از SiftingIO ناموفق بود (" + sifting_error +
+                    "). Twelve Data نیز ناموفق بود (" + str(twelve_exc)[:100] +
+                    "). Yahoo Finance نیز در دسترس نیست (" + str(yahoo_exc)[:100] + ")."
                 )
 
     raise HTTPException(400, "فقط کریپتو، طلا و نقره پشتیبانی می‌شوند")
