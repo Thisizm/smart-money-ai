@@ -669,25 +669,51 @@ def _fetch_candles_uncached(market, symbol, timeframe):
     if market in METALS:
         if symbol != METALS[market]:
             raise HTTPException(400, "نماد فلز نامعتبر است")
+
+        # Validate each provider before accepting its history. A provider can
+        # return HTTP 200 with months-old candles; that must trigger the next
+        # provider rather than reaching the chart-level stale-data rejection.
+        freshness_limits = {
+            "gold": {"5m": 6 * 3600, "15m": 12 * 3600, "1h": 24 * 3600, "4h": 72 * 3600, "1d": 5 * 86400, "1w": 21 * 86400},
+            "silver": {"5m": 6 * 3600, "15m": 12 * 3600, "1h": 24 * 3600, "4h": 72 * 3600, "1d": 5 * 86400, "1w": 21 * 86400},
+        }
+        max_age = freshness_limits[market][timeframe]
+        provider_errors = []
+
+        def accept_fresh_provider(candles, provider_name):
+            closed = completed_candles(candles, timeframe)
+            if not closed:
+                raise RuntimeError(provider_name + ": no completed candles")
+            latest_ms = int(closed[-1].get("time") or 0)
+            age = max(0, int(time.time() - latest_ms / 1000))
+            if age > max_age:
+                latest = datetime.fromtimestamp(latest_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                raise RuntimeError(provider_name + ": stale last closed candle " + latest + " (" + str(age // 3600) + "h old)")
+            return candles
+
         if market == "silver" and SIFTINGIO_API_KEY:
             try:
-                return get_siftingio_silver_candles(timeframe)
-            except Exception as sifting_exc:
-                sifting_error = str(sifting_exc)[:180]
-        else:
-            sifting_error = "SIFTINGIO_API_KEY تنظیم نشده است"
+                return accept_fresh_provider(get_siftingio_silver_candles(timeframe), "SiftingIO")
+            except Exception as exc:
+                provider_errors.append(str(exc)[:180])
+        elif market == "silver":
+            provider_errors.append("SiftingIO_API_KEY تنظیم نشده است")
+
         try:
-            return get_twelve_data_metals_candles(symbol, timeframe)
-        except Exception as twelve_exc:
-            try:
-                return get_yahoo_metals_candles(market, timeframe)
-            except Exception as yahoo_exc:
-                raise HTTPException(
-                    502,
-                    "دریافت کندل نقره از SiftingIO ناموفق بود (" + sifting_error +
-                    "). Twelve Data نیز ناموفق بود (" + str(twelve_exc)[:100] +
-                    "). Yahoo Finance نیز در دسترس نیست (" + str(yahoo_exc)[:100] + ")."
-                )
+            return accept_fresh_provider(get_twelve_data_metals_candles(symbol, timeframe), "Twelve Data")
+        except Exception as exc:
+            provider_errors.append(str(exc)[:180])
+
+        try:
+            return accept_fresh_provider(get_yahoo_metals_candles(market, timeframe), "Yahoo Finance")
+        except Exception as exc:
+            provider_errors.append(str(exc)[:180])
+
+        raise HTTPException(
+            502,
+            "هیچ منبعی کندل تازه و معتبر برای " + market + " / " + timeframe +
+            " نداد؛ تحلیل متوقف شد. جزئیات منابع: " + " | ".join(provider_errors)
+        )
 
     raise HTTPException(400, "فقط کریپتو، طلا و نقره پشتیبانی می‌شوند")
 
