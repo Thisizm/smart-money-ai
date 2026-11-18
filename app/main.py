@@ -20,7 +20,7 @@ from .pro_analysis import advanced_analysis
 from .intelligence_engine import assess_hidden_intelligence, apply_intelligence_gate
 from .backtesting import run_research_backtest
 from .paper_trading import init_paper_db, record_signal, monitor_open_trades, list_paper_trades, close_paper_trade
-from .ai_brain import call_gemini, validate_decision
+from .ai_brain import call_openrouter, validate_decision
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(APP_DIR)
@@ -3012,9 +3012,9 @@ def _compact_ai_evidence(value, depth=0, list_limit=8, string_limit=500, key_lim
 
 @app.post("/api/ai-decision")
 async def ai_decision(request: Request):
-    """Gemini is the primary independent analyst; evidence sources are gathered concurrently."""
-    if not GEMINI_API_KEY:
-        raise HTTPException(503, "برای موتور اصلی هوش مصنوعی، GEMINI_API_KEY رایگان را در Render ثبت کن.")
+    """OpenRouter Nemotron is the primary independent analyst; evidence sources are gathered concurrently."""
+    if not os.getenv("OPENROUTER_API_KEY", "").strip():
+        raise HTTPException(503, "کلید OPENROUTER_API_KEY را در تنظیمات Render ثبت کن.")
     try:
         payload = await request.json()
     except Exception:
@@ -3042,7 +3042,7 @@ async def ai_decision(request: Request):
             remaining = max(1, int(failed_until - now))
             raise HTTPException(
                 429,
-                "درخواست قبلی Gemini به محدودیت خورد؛ برای جلوگیری از مصرف دوباره سهمیه، "
+                "درخواست قبلی مدل هوش مصنوعی به محدودیت خورد؛ برای جلوگیری از مصرف دوباره سهمیه، "
                 "این نماد موقتاً متوقف شده است. " + str(remaining) + " ثانیه دیگر دوباره امتحان کن."
             )
         if cache_key in AI_BRAIN_INFLIGHT:
@@ -3142,9 +3142,9 @@ async def ai_decision(request: Request):
         if len(encoded) > 52000:
             raise RuntimeError("حجم داده حتی پس از خلاصه‌سازی از حد مجاز بیشتر است؛ گزارش فشرده‌سازی لازم است.")
 
-        gemini_started = time.perf_counter()
-        ai_result = call_gemini(evidence)
-        gemini_ms = round((time.perf_counter() - gemini_started) * 1000)
+        ai_started = time.perf_counter()
+        ai_result = call_openrouter(evidence)
+        ai_ms = round((time.perf_counter() - ai_started) * 1000)
         ai_result = validate_decision(
             ai_result,
             live_quote=technical.get("live_quote"),
@@ -3177,10 +3177,10 @@ async def ai_decision(request: Request):
                 "technical": technical_ms, "six_timeframes": mtf_ms,
                 "macro_news_cot": context_ms, "correlations": correlations_ms,
                 "dominance": dominance_ms, "economic_calendar": calendar_ms,
-                "gemini": gemini_ms,
+                "ai_model": ai_ms,
                 "total": round((time.perf_counter() - request_started) * 1000)
             },
-            "provider": ai_result.get("provider", "Google Gemini"),
+            "provider": ai_result.get("provider", "OpenRouter"),
             "model": ai_result.get("model"),
             "updated_at": utc_now(),
             "free_tier_only": True,
@@ -3195,10 +3195,10 @@ async def ai_decision(request: Request):
         raise
     except Exception as exc:
         message = str(exc)
-        if "سهمیه روزانه Gemini" in message or "محدودیت سرعت/تعداد درخواست Gemini" in message:
+        if "محدودیت درخواست رایگان OpenRouter" in message:
             with AI_BRAIN_CACHE_LOCK:
                 AI_BRAIN_FAILURE_CACHE[cache_key] = time.time() + 20
-            raise HTTPException(429, "تحلیل Gemini فعلاً به محدودیت خورده است: " + message[:600])
+            raise HTTPException(429, "تحلیل مدل هوش مصنوعی فعلاً به محدودیت خورده است: " + message[:600])
         raise HTTPException(502, "تحلیل هوش مصنوعی انجام نشد: " + message[:240])
     finally:
         with AI_BRAIN_CACHE_LOCK:
