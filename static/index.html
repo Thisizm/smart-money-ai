@@ -161,7 +161,7 @@ function renderSmartEntryChart(d,plan,side){
 function updateSmartEntryLiveChart(q,aligned=true){
  if(!smartEntryChart||!smartEntryCandleSeries||!q||!q.available)return;
  const price=Number(q.price);if(!Number.isFinite(price)||price<=0)return;
- if(smartEntryLivePriceLine){try{smartEntryLivePriceLine.applyOptions({price})}catch(e){}}
+ if(smartEntryLivePriceLine){try{smartEntryLivePriceLine.applyOptions({price})}catch(e){}}else{try{smartEntryLivePriceLine=smartEntryCandleSeries.createPriceLine({price,color:"#7dd3fc",lineWidth:2,lineStyle:LightweightCharts.LineStyle.Solid,axisLabelVisible:true,title:"قیمت زنده"})}catch(e){}}
  // Keep the live quote visible even if source alignment blocks new entries.
  if(q.is_proxy||aligned===false)return;
  const tfSeconds={"5m":300,"15m":900,"1h":3600,"4h":14400,"1d":86400,"1w":604800};
