@@ -167,6 +167,9 @@ def init_db():
             usdt_market_cap REAL
         )
         """)
+        columns = {row["name"] for row in con.execute("PRAGMA table_info(dominance_history)").fetchall()}
+        if "source_updated_at" not in columns:
+            con.execute("ALTER TABLE dominance_history ADD COLUMN source_updated_at TEXT")
         con.execute("CREATE INDEX IF NOT EXISTS idx_dominance_history_sampled_at ON dominance_history(sampled_at)")
 
 
@@ -2080,19 +2083,23 @@ def _record_dominance_snapshot(payload, sampled_at=None):
     stamp = float(sampled_at or time.time())
     total = _as_float(payload.get("total_market_cap_usd"))
     usdt_cap = total * float(payload["usdt"]) / 100.0 if total is not None else None
+    source_updated_at = payload.get("source_updated_at")
     with db() as con:
         last = con.execute(
-            "SELECT sampled_at FROM dominance_history ORDER BY sampled_at DESC LIMIT 1"
+            "SELECT sampled_at, source_updated_at FROM dominance_history ORDER BY sampled_at DESC LIMIT 1"
         ).fetchone()
-        # Avoid duplicate snapshots from concurrent callers and provider cache hits.
-        if last and stamp - float(last["sampled_at"]) < 60:
+        # Only save a new observation when the provider itself has published
+        # a newer snapshot; never manufacture a flat trend from cached values.
+        if last and source_updated_at and last["source_updated_at"] == source_updated_at:
+            return
+        if last and stamp - float(last["sampled_at"]) < 50:
             return
         con.execute(
             """INSERT INTO dominance_history
-            (sampled_at, source, btc, eth, usdt, total_market_cap, usdt_market_cap)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (sampled_at, source, btc, eth, usdt, total_market_cap, usdt_market_cap, source_updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (stamp, payload.get("source"), payload.get("btc"), payload.get("eth"),
-             payload.get("usdt"), total, usdt_cap)
+             payload.get("usdt"), total, usdt_cap, source_updated_at)
         )
         # Keep a bounded rolling archive (about 90 days at normal polling cadence).
         con.execute("DELETE FROM dominance_history WHERE sampled_at < ?", (stamp - 90 * 86400,))
@@ -2160,7 +2167,7 @@ def dominance():
     now = time.time()
     with DOMINANCE_LOCK:
         cached = DOMINANCE_CACHE.get("data")
-        if cached and now - DOMINANCE_CACHE.get("at", 0) < 90:
+        if cached and now - DOMINANCE_CACHE.get("at", 0) < 45:
             result = dict(cached)
             result["cache_hit"] = True
             result["usdt_trend"] = _dominance_history_payload(result)
