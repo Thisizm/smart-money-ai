@@ -407,7 +407,7 @@ def get_siftingio_silver_candles(timeframe):
     } for row in rows if all(row.get(k) is not None for k in ("t", "o", "h", "l", "c"))]
     if timeframe == "4h":
         candles = aggregate_candles(candles, "4h")
-    candles = candles[-250:]
+    # Keep the full provider response for historical structure analysis; chart display has its own limit.
     if len(candles) < 60:
         raise RuntimeError("SiftingIO returned only " + str(len(candles)) + " usable candles for " + timeframe)
     return candles
@@ -424,7 +424,7 @@ def get_twelve_data_metals_candles(symbol, timeframe):
     # Metals were previously hard-limited to 250 candles, making every gold
     # chart look like it had almost no history. Request a larger but bounded
     # window; Twelve Data may still return fewer bars according to the API plan.
-    metal_history_limit = max(250, min(int(os.getenv("METAL_HISTORICAL_CANDLE_LIMIT", "1000")), 5000))
+    metal_history_limit = max(250, min(int(os.getenv("METAL_HISTORICAL_CANDLE_LIMIT", "5000")), 5000))
     params = urllib.parse.urlencode({
         "symbol": provider_symbol, "interval": tf["twelve"], "outputsize": metal_history_limit,
         "apikey": TWELVE_DATA_API_KEY, "format": "JSON", "timezone": "UTC"
@@ -633,7 +633,8 @@ def _fetch_candles_uncached(market, symbol, timeframe):
             raise HTTPException(400, "نماد باید یک جفت فعال USDT در Binance Spot باشد")
         # Binance limits each request to 1000 bars. Page backwards from the
         # newest bar so the analysis/backtest receives a longer contiguous history.
-        target = max(250, min(int(os.getenv("HISTORICAL_CANDLE_LIMIT", "2000")), 3000))
+        # 10k bars per timeframe give the engine deeper context for historical swings.
+        target = max(500, min(int(os.getenv("HISTORICAL_CANDLE_LIMIT", "10000")), 10000))
         rows, end_time = [], None
         try:
             while len(rows) < target:
@@ -1725,7 +1726,8 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     apply_intelligence_gate(result, intelligence)
 
     _set_analysis_progress(request_id, "chart_build", "آماده‌سازی کندل‌های نمودار، RSI و علامت‌های سیگنال")
-    chart_limit = max(300, min(int(os.getenv("CHART_CANDLE_LIMIT", "1500")), 3000))
+    # Keep mobile chart rendering lighter than the full analysis history.
+    chart_limit = max(300, min(int(os.getenv("CHART_CANDLE_LIMIT", "3000")), 5000))
     chart_bars = completed_candles(candles, timeframe)[-chart_limit:]
     result["chart_candles"] = [{
         "time": int(c["time"] // 1000),
@@ -1735,6 +1737,21 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     } for c in chart_bars]
     result["chart_source"] = result.get("candle_source")
     result["chart_source_symbol"] = (chart_bars[-1].get("source_symbol") if chart_bars else None) or (symbol if market == "crypto" else None)
+    # Expose actual provider coverage; free plans may return fewer bars than requested.
+    analysis_bars = completed_candles(candles, timeframe)
+    result["history_info"] = {
+        "timeframe": timeframe,
+        "analysis_candles": len(analysis_bars),
+        "chart_candles": len(chart_bars),
+        "requested_analysis_candles": (
+            max(500, min(int(os.getenv("HISTORICAL_CANDLE_LIMIT", "10000")), 10000))
+            if market == "crypto" else
+            max(250, min(int(os.getenv("METAL_HISTORICAL_CANDLE_LIMIT", "5000")), 5000))
+        ),
+        "first_candle_time": int(candles[0]["time"] // 1000) if candles else None,
+        "last_closed_candle_time": int(analysis_bars[-1]["time"] // 1000) if analysis_bars else None,
+        "note": "تمام کندل‌های دریافتی برای تحلیل ساختار تاریخی استفاده می‌شوند؛ نمودار فقط تعداد جداگانه‌ای از کندل‌ها را نمایش می‌دهد."
+    }
     rsi_values = (result.get("advanced_analysis") or {}).get("rsi_series") or []
     rsi_values = rsi_values[-len(chart_bars):] if chart_bars else []
     result["rsi_chart"] = [
