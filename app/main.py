@@ -1412,7 +1412,7 @@ def status():
             "crypto_derivatives": "Binance public futures funding/OI/long-short + spot order-book snapshot",
             "metals_prices": "Twelve Data spot when entitled; Yahoo spot fallback only. COMEX futures proxy is disabled unless ALLOW_METAL_FUTURES_PROXY=true.",
             "metal_instrument_note": "Spot and futures are never mixed by default. If no spot feed is available, the metal analysis returns unavailable instead of silently substituting a futures contract.",
-            "crypto_dominance": "Market-cap dominance from CoinGecko" + ("; CoinMarketCap fallback key configured" if COINMARKETCAP_API_KEY else "; optional CoinMarketCap fallback key not set") + "; Binance Spot is used for exchange prices, not global dominance",
+            "crypto_dominance": "CoinMarketCap global metrics primary; CoinGecko fallback; Binance Spot is used for exchange prices, not global dominance",
             "liquidation_heatmap": "غیرفعال؛ خوشه‌های تخمینی از امتیازدهی و رابط حذف شدند",
             "global_news": "GDELT DOC 2.0",
             "macro_indicators": "FRED " + ("configured" if FRED_API_KEY else "key_required"),
@@ -2093,24 +2093,11 @@ def _build_coinmarketcap_keyless_dominance():
     if not total or total <= 0 or btc is None or eth is None:
         raise RuntimeError("CoinMarketCap global metrics missing total cap or BTC/ETH dominance")
 
-    usdt_raw = fetch_json(
-        base + "/v3/cryptocurrency/quotes/latest?symbol=USDT&convert=USD",
-        timeout=15
-    )
-    usdt_data = usdt_raw.get("data") or {}
-    usdt_items = usdt_data.get("USDT") if isinstance(usdt_data, dict) else None
-    if isinstance(usdt_items, dict):
-        usdt_item = usdt_items
-    elif isinstance(usdt_items, list) and usdt_items:
-        usdt_item = usdt_items[0]
-    else:
-        raise RuntimeError("CoinMarketCap did not return the USDT quote")
-    usdt_quote = ((usdt_item.get("quote") or {}).get("USD") or {})
-    usdt_cap = _as_float(usdt_quote.get("market_cap"))
-    if usdt_cap is None or usdt_cap <= 0:
-        raise RuntimeError("CoinMarketCap USDT market cap is missing")
-
-    usdt = usdt_cap / total * 100.0
+    # Global metrics already publishes USDT dominance. Use it directly:
+    # this avoids a second endpoint that may require an authenticated plan.
+    usdt = _as_float(global_data.get("usdt_dominance"))
+    if usdt is None:
+        raise RuntimeError("CoinMarketCap global metrics did not include USDT dominance")
     if not (0 <= btc <= 100 and 0 <= eth <= 100 and 0 <= usdt <= 100):
         raise RuntimeError("CoinMarketCap dominance values are outside valid range")
     return {
