@@ -2265,32 +2265,19 @@ def dominance():
             return result
 
         errors = []
-        try:
-            result = _build_top125_dominance_payload()
-            DOMINANCE_CACHE.update({"at": now, "data": result})
-            _record_dominance_snapshot(result, now)
-            result["cache_hit"] = False
-            result["usdt_trend"] = _dominance_history_payload(result)
-            return result
-        except Exception as exc:
-            errors.append("Top-125 estimate: " + str(exc)[:140])
-
-        # Fallback keeps the dashboard available, but the source label makes
-        # clear that this is the broader CoinGecko global-market calculation.
         headers = {"x-cg-demo-api-key": COINGECKO_API_KEY} if COINGECKO_API_KEY else {}
         try:
             raw = fetch_json("https://api.coingecko.com/api/v3/global", headers=headers, timeout=12)
             result = _build_dominance_payload("CoinGecko", raw)
-            result["fallback_used"] = True
-            result["methodology"] = "coingecko_global_fallback"
-            result["note"] += " روش اصلی سبد ۱۲۵ ارز در دسترس نبود؛ این مقدار از کل بازار CoinGecko است و با TradingView قابل مقایسه مستقیم نیست."
+            result["methodology"] = "coingecko_global"
+            result["note"] += " این مقدار از داده کل بازار CoinGecko است؛ با USDT.D در TradingView به‌دلیل تفاوت سبد و روش محاسبه ممکن است اختلاف داشته باشد."
             DOMINANCE_CACHE.update({"at": now, "data": result})
             _record_dominance_snapshot(result, now)
             result["cache_hit"] = False
             result["usdt_trend"] = _dominance_history_payload(result)
             return result
         except Exception as exc:
-            errors.append("CoinGecko global fallback: " + str(exc)[:140])
+            errors.append("CoinGecko global: " + str(exc)[:140])
 
         if COINMARKETCAP_API_KEY:
             try:
