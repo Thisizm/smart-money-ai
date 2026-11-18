@@ -269,3 +269,57 @@ def validate_decision(result, live_quote=None, execution_quality=None):
         result["stop_loss"] = stop
         result["targets"] = targets[:3]
     return result
+
+
+DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+
+
+def call_openrouter(evidence):
+    """Primary free-tier reasoning model through OpenRouter; deterministic validation stays downstream."""
+    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY در تنظیمات Render ثبت نشده است")
+    model = os.getenv("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL).strip() or DEFAULT_OPENROUTER_MODEL
+    body = json.dumps({
+        "model": model,
+        "messages": [{"role": "user", "content": build_prompt(evidence)}],
+        "temperature": 0.15,
+        "max_tokens": 2400
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=body,
+        headers={
+            "Authorization": "Bearer " + api_key,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://smart-money-ai-t07z.onrender.com/",
+            "X-Title": "Smart Money AI"
+        },
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "ignore")[:1000]
+        if exc.code in (401, 403):
+            raise RuntimeError("کلید OpenRouter معتبر نیست یا دسترسی ندارد: " + detail)
+        if exc.code == 429:
+            raise RuntimeError("محدودیت درخواست رایگان OpenRouter فعال شده است؛ کمی بعد دوباره تلاش کن. " + detail)
+        if exc.code in (502, 503, 504):
+            raise RuntimeError("مدل رایگان OpenRouter موقتاً در دسترس نیست. " + detail)
+        raise RuntimeError("خطای OpenRouter HTTP " + str(exc.code) + ": " + detail)
+    choices = data.get("choices") or []
+    content = ((choices[0].get("message") or {}).get("content") if choices else None)
+    if isinstance(content, list):
+        content = "\\n".join(
+            part.get("text", "") for part in content if isinstance(part, dict)
+        )
+    if not content or not str(content).strip():
+        raise RuntimeError("OpenRouter پاسخ متنی قابل استفاده نداد")
+    result = _extract_json(str(content))
+    if not isinstance(result, dict):
+        raise RuntimeError("ساختار پاسخ هوش مصنوعی معتبر نیست")
+    result["provider"] = "OpenRouter"
+    result["model"] = data.get("model") or model
+    return result
