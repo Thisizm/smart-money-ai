@@ -122,8 +122,9 @@ function renderDivergences(d){
  const el=document.getElementById("divergence-panel");if(!el)return;
  const pack=((d.advanced_analysis||{}).divergences||{}),items=pack.signals||[];
  if(!items.length){el.innerHTML="<b>واگرایی تأییدشده‌ای پیدا نشد.</b><br><span class='small'>برای نمایش واگرایی، باید دو نقطه برگشت قیمت شکل بگیرد و دو کندل بعدی هم بسته شوند. در این بازه شرط لازم پیدا نشد.</span><br><span class='small'>RSI فعلی: "+fmt((d.advanced_analysis||{}).rsi_wilder_14)+"</span>";return}
- const labels={regular_bullish:"واگرایی معمولی صعودی",hidden_bullish:"واگرایی مخفی صعودی",regular_bearish:"واگرایی معمولی نزولی",hidden_bearish:"واگرایی مخفی نزولی"};
- el.innerHTML=items.map(x=>'<div class="item"><b>'+((labels[x.type]||x.type))+'</b> | قیمت: '+fmt(x.price)+' | RSI: '+fmt(x.rsi)+'<br><span class="small">پیوت تأییدشده؛ '+new Date(x.time).toLocaleString("fa-IR")+' | پس از بسته‌شدن دو کندل تأیید شده است. این واگرایی به‌تنهایی مجوز ورود نیست.</span></div>').join("");
+ const labels={regular_bullish:"صعودی",hidden_bullish:"صعودی مخفی",regular_bearish:"نزولی",hidden_bearish:"نزولی مخفی"};
+ const groups={};items.forEach(x=>{const k=x.type||"other";(groups[k]||(groups[k]=[])).push(x)});
+ el.innerHTML='<div class="small">خلاصه واگرایی‌های تأییدشده؛ واگرایی به‌تنهایی سیگنال ورود نیست.</div>'+Object.entries(groups).map(([k,list])=>{const x=list[list.length-1];return '<div class="item"><b>واگرایی '+(labels[k]||k)+'</b> | تعداد: '+list.length+'<br>آخرین مورد: قیمت '+fmt(x.price)+'، RSI '+fmt(x.rsi)+' | '+new Date(x.time).toLocaleString("fa-IR")+'</div>'}).join("");
 }
 function renderScenario(d){
  const el=document.getElementById("scenario-analysis"),p=d.trade_plan||{},a=d.scenario_analysis||{};
@@ -628,8 +629,10 @@ function renderAiBrainChart(a){
  const add=(v,color,title)=>{const n=Number(v);if(Number.isFinite(n)&&n>0){series.createPriceLine({price:n,color,lineWidth:2,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title});levels.push('<span class="legend-chip"><span class="legend-dot" style="background:'+color+'"></span>'+title+' '+aiBrainEscape(fmt(n))+'</span>')}};
  const q=d.live_quote||{};
  if(q.available)add(q.price,"#7dd3fc","قیمت زنده");
- if(a.entry_zone){add(a.entry_zone.low,"#facc15","کف ورود");add(a.entry_zone.high,"#facc15","سقف ورود");add(a.stop_loss,"#fb7185","حد ضرر");(a.targets||[]).slice(0,2).forEach((v,i)=>add(v,"#4ade80","هدف "+(i+1)))}
- document.getElementById("ai-brain-chart-legend").innerHTML=levels.join("")||'<span class="small">فعلاً فقط روند قیمت نمایش داده می‌شود؛ ورود عددی تأیید نشده است.</span>';
+ if(a.entry_zone){add(a.entry_zone.low,"#facc15","کف ورود فعال");add(a.entry_zone.high,"#facc15","سقف ورود فعال");add(a.stop_loss,"#fb7185","حد ضرر");(a.targets||[]).slice(0,2).forEach((v,i)=>add(v,"#4ade80","هدف "+(i+1)))}
+ const kl=a.key_levels||{};(kl.support||[]).slice(0,3).forEach((x,i)=>add(x.price,"#38bdf8","حمایت "+(i+1)));(kl.resistance||[]).slice(0,3).forEach((x,i)=>add(x.price,"#c084fc","مقاومت "+(i+1)));
+ const sc=a.conditional_scenarios||{};if(sc.bullish)add(sc.bullish.trigger_level,"#22c55e","تریگر صعودی");if(sc.bearish)add(sc.bearish.trigger_level,"#fb923c","تریگر نزولی");
+ document.getElementById("ai-brain-chart-legend").innerHTML=levels.join("")||'<span class="small">سطح معتبر برای علامت‌گذاری پیدا نشد؛ فعلاً فقط روند قیمت نمایش داده می‌شود.</span>';
  aiBrainChart.timeScale().fitContent();
  if(typeof ResizeObserver!=="undefined"){const ro=new ResizeObserver(()=>{if(aiBrainChart&&el.clientWidth>0)aiBrainChart.applyOptions({width:el.clientWidth})});ro.observe(el);el._aiResizeObserver=ro}
 }
@@ -643,13 +646,16 @@ async function runAiBrain(){
   const a=data.analysis||{},side=a.decision==="BUY"?"خرید":a.decision==="SELL"?"فروش":"انتظار";
   const decisionClass=a.decision==="BUY"?"buy":a.decision==="SELL"?"sell":"wait";
   const zone=a.entry_zone;
-  const plan=zone?'<div class="item"><b>پلن ورود:</b> '+fmt(zone.low)+' تا '+fmt(zone.high)+' | حد ضرر: '+fmt(a.stop_loss)+' | هدف‌ها: '+(a.targets||[]).slice(0,2).map(fmt).join(" / ")+'<br><b>شرط ورود:</b> '+aiBrainEscape(a.entry_trigger)+'</div>':'<div class="item">ورود تأییدشده‌ای وجود ندارد؛ فعلاً معامله نکن. '+aiBrainEscape(a.entry_trigger||"منتظر شکل‌گیری موقعیت معتبر بمان.")+'</div>';
+  const plan=zone?'<div class="item"><b>پلن فعال '+side+':</b> '+fmt(zone.low)+' تا '+fmt(zone.high)+' | حد ضرر: '+fmt(a.stop_loss)+' | هدف‌ها: '+(a.targets||[]).slice(0,2).map(fmt).join(" / ")+'<br><b>شرط ورود:</b> '+aiBrainEscape(a.entry_trigger)+'</div>':'<div class="item"><b>فعلاً ورود نداریم.</b> '+aiBrainEscape(a.entry_trigger||"تا فعال‌شدن یکی از شرط‌های زیر صبر کن.")+'</div>';
+  const scenarios=a.conditional_scenarios||{},scenarioCard=(key,label)=>{const x=scenarios[key]||{};const z=x.entry_zone;return '<div class="item"><b>اگر سناریوی '+label+' فعال شد</b><br>تریگر: '+(x.trigger_level?fmt(x.trigger_level):"سطح مشخص نشده")+'<br>شرط: '+aiBrainEscape(x.condition||"هنوز شرط معتبری مشخص نیست")+'<br>ورود پس از تأیید: '+(z?fmt(z.low)+" تا "+fmt(z.high):"هنوز قابل تعیین نیست")+' | حد ضرر: '+fmt(x.stop_loss)+'<br>هدف‌ها: '+((x.targets||[]).slice(0,2).map(fmt).join(" / ")||"مشخص نشده")+'</div>'};
+  const levels=a.key_levels||{},levelText=(items)=>Array.isArray(items)&&items.length?items.slice(0,3).map(x=>fmt(x.price)+" ("+aiBrainEscape(x.label||"سطح")+")").join("، "):"سطح قابل اتکا مشخص نشد";
+  const levelPanel='<div class="item"><b>حمایت‌ها:</b> '+levelText(levels.support)+'<br><b>مقاومت‌ها:</b> '+levelText(levels.resistance)+'</div>';
   const cmp=data.technical_comparison||{},timings=data.performance_ms||{};
   const timingLabels={technical:"تحلیل تکنیکال",six_timeframes:"شش تایم‌فریم",macro_news_cot:"اخبار و اقتصاد",correlations:"همبستگی",dominance:"دامیننس",economic_calendar:"تقویم",ai_model:"هوش مصنوعی",total:"مجموع"};
   const timingRows=Object.entries(timingLabels).filter(([key])=>Number.isFinite(Number(timings[key]))).map(([key,label])=>'<div class="row" style="justify-content:space-between;gap:12px"><span>'+label+'</span><b>'+((Number(timings[key])/1000).toFixed(1))+' ثانیه</b></div>').join("");
   out.innerHTML='<div class="metrics">'+metric("تصمیم",'<span class="'+decisionClass+'">'+side+'</span>')+metric("کیفیت شواهد",fmt(a.setup_quality)+"/100")+metric("سیگنال تکنیکال",aiBrainEscape(cmp.signal||"—"))+metric("هم‌جهتی تایم‌فریم‌ها",fmt(cmp.multi_timeframe_alignment)+"%")+'</div>'+
-   '<div class="chart-panel"><b>نمودار روند و سطوح تحلیل هوش مصنوعی</b><div id="ai-brain-chart" style="width:100%;height:280px;direction:ltr;margin-top:8px"></div><div id="ai-brain-chart-legend" class="chart-legend"></div></div>'+
-   '<div class="smart-summary"><b>نتیجه:</b> '+aiBrainEscape(a.summary)+'<br><b>روند کلی:</b> '+aiBrainEscape(a.market_regime)+' | <b>تایم‌فریم بالاتر:</b> '+aiBrainEscape(a.higher_timeframe_bias)+'</div>'+plan+
+   '<div class="chart-panel"><b>نمودار روند، حمایت، مقاومت و تریگرها</b><div id="ai-brain-chart" style="width:100%;height:280px;direction:ltr;margin-top:8px"></div><div id="ai-brain-chart-legend" class="chart-legend"></div></div>'+
+   '<div class="smart-summary"><b>نتیجه:</b> '+aiBrainEscape(a.summary)+'<br><b>روند کلی:</b> '+aiBrainEscape(a.market_regime)+' | <b>تایم‌فریم بالاتر:</b> '+aiBrainEscape(a.higher_timeframe_bias)+'</div>'+plan+levelPanel+scenarioCard("bullish","صعودی / خرید")+scenarioCard("bearish","نزولی / فروش")+
    '<details class="item"><summary><b>چرا این تصمیم گرفته شد؟</b></summary><b>دلایل خرید</b>'+aiBrainList(a.bullish_factors)+'<b>دلایل فروش</b>'+aiBrainList(a.bearish_factors)+'</details>'+
    '<details class="item"><summary><b>تعارض‌ها و ریسک‌های مهم</b></summary><b>تعارض</b>'+aiBrainList(a.conflicts)+'<b>ریسک</b>'+aiBrainList(a.risk_flags)+'<b>ابطال تحلیل:</b> '+aiBrainEscape(a.invalidation)+'</details>'+
    '<details class="item"><summary><b>کیفیت داده و مقایسه با موتور تکنیکال</b></summary>'+aiBrainList(a.data_quality)+'<br>تکنیکال: '+aiBrainEscape(cmp.signal)+' | چندتایم‌فریمی: '+aiBrainEscape(cmp.multi_timeframe_overall)+'<br>ورود تکنیکال: '+fmt(cmp.entry)+' | حد ضرر: '+fmt(cmp.stop_loss)+' | هدف‌ها: '+(cmp.targets||[]).slice(0,2).map(fmt).join(" / ")+'</details>'+
