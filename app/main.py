@@ -2076,6 +2076,97 @@ def _build_dominance_payload(source, raw):
     }
 
 
+
+def _build_top125_dominance_payload():
+    """Estimate TradingView-style dominance from the top-125 universe.
+    Circulating supply comes from CoinGecko; Binance Spot USDT prices are
+    preferred wherever a matching pair exists. This is not the official
+    CRYPTOCAP feed and is deliberately labelled as an approximation.
+    """
+    headers = {"x-cg-demo-api-key": COINGECKO_API_KEY} if COINGECKO_API_KEY else {}
+    params = urllib.parse.urlencode({
+        "vs_currency": "usd", "order": "market_cap_desc",
+        "per_page": 125, "page": 1, "sparkline": "false"
+    })
+    assets = fetch_json(
+        "https://api.coingecko.com/api/v3/coins/markets?" + params,
+        headers=headers, timeout=18
+    )
+    if not isinstance(assets, list) or len(assets) < 80:
+        raise RuntimeError("CoinGecko top-125 universe returned too few assets")
+
+    tickers = fetch_json("https://data-api.binance.vision/api/v3/ticker/price", timeout=18)
+    binance_prices = {}
+    for item in tickers if isinstance(tickers, list) else []:
+        symbol = str(item.get("symbol") or "")
+        if symbol.endswith("USDT"):
+            base = symbol[:-4]
+            price = _as_float(item.get("price"))
+            if base and price and price > 0:
+                binance_prices[base] = price
+
+    market_caps = []
+    used_binance = 0
+    used_coingecko_price = 0
+    for asset in assets[:125]:
+        symbol = str(asset.get("symbol") or "").upper()
+        supply = _as_float(asset.get("circulating_supply"))
+        cg_price = _as_float(asset.get("current_price"))
+        if symbol == "USDT":
+            price = 1.0
+        elif symbol in binance_prices:
+            price = binance_prices[symbol]
+            used_binance += 1
+        else:
+            price = cg_price
+            if price and price > 0:
+                used_coingecko_price += 1
+        if not supply or supply <= 0 or not price or price <= 0:
+            continue
+        market_caps.append((symbol, supply * price))
+
+    if len(market_caps) < 70:
+        raise RuntimeError("Too few top-125 assets had valid circulating supply and price data")
+    total = sum(cap for _, cap in market_caps)
+    if total <= 0:
+        raise RuntimeError("Top-125 estimated total market cap is invalid")
+    caps = {}
+    for symbol, cap in market_caps:
+        caps[symbol] = caps.get(symbol, 0.0) + cap
+    btc_cap = caps.get("BTC", 0.0)
+    eth_cap = caps.get("ETH", 0.0)
+    usdt_cap = caps.get("USDT", 0.0)
+    btc = btc_cap / total * 100
+    eth = eth_cap / total * 100
+    usdt = usdt_cap / total * 100
+    now_dt = datetime.now(timezone.utc)
+    return {
+        "available": True,
+        "btc": round(btc, 4), "eth": round(eth, 4), "usdt": round(usdt, 4),
+        "others_ex_btc_eth_usdt": round(max(0.0, 100.0 - btc - eth - usdt), 4),
+        "total_market_cap_usd": total,
+        "total_volume_24h_usd": sum(
+            (_as_float(a.get("total_volume")) or 0.0) for a in assets[:125]
+        ),
+        "updated_at": utc_now(),
+        "source_updated_at": now_dt.isoformat(),
+        "source_age_seconds": 0,
+        "source": "تخمین سبد ۱۲۵ ارز برتر (عرضه CoinGecko + قیمت Binance Spot)",
+        "methodology": "top125_binance_prices_coingecko_supply",
+        "universe_size": len(assets[:125]),
+        "assets_used": len(market_caps),
+        "binance_priced_assets": used_binance,
+        "coingecko_price_fallback_assets": used_coingecko_price,
+        "stale": False,
+        "note": (
+            "این عدد تخمین نزدیک به روش سبد ۱۲۵ ارز برتر است، نه داده رسمی TradingView CRYPTOCAP. "
+            "عرضه در گردش از CoinGecko گرفته می‌شود؛ قیمت جفت USDT در Binance Spot در صورت وجود اولویت دارد "
+            "و برای دارایی‌های فاقد جفت، قیمت CoinGecko استفاده می‌شود. "
+            "به‌دلیل تفاوت فهرست دارایی‌ها، عرضه و روش محاسبه، ممکن است با USDT.D در TradingView اختلاف داشته باشد."
+        )
+    }
+
+
 def _record_dominance_snapshot(payload, sampled_at=None):
     """Persist real provider snapshots; history starts accumulating after deployment."""
     if not payload.get("available") or payload.get("usdt") is None:
@@ -2174,17 +2265,32 @@ def dominance():
             return result
 
         errors = []
-        headers = {"x-cg-demo-api-key": COINGECKO_API_KEY} if COINGECKO_API_KEY else {}
         try:
-            raw = fetch_json("https://api.coingecko.com/api/v3/global", headers=headers, timeout=12)
-            result = _build_dominance_payload("CoinGecko", raw)
+            result = _build_top125_dominance_payload()
             DOMINANCE_CACHE.update({"at": now, "data": result})
             _record_dominance_snapshot(result, now)
             result["cache_hit"] = False
             result["usdt_trend"] = _dominance_history_payload(result)
             return result
         except Exception as exc:
-            errors.append("CoinGecko: " + str(exc)[:140])
+            errors.append("Top-125 estimate: " + str(exc)[:140])
+
+        # Fallback keeps the dashboard available, but the source label makes
+        # clear that this is the broader CoinGecko global-market calculation.
+        headers = {"x-cg-demo-api-key": COINGECKO_API_KEY} if COINGECKO_API_KEY else {}
+        try:
+            raw = fetch_json("https://api.coingecko.com/api/v3/global", headers=headers, timeout=12)
+            result = _build_dominance_payload("CoinGecko", raw)
+            result["fallback_used"] = True
+            result["methodology"] = "coingecko_global_fallback"
+            result["note"] += " روش اصلی سبد ۱۲۵ ارز در دسترس نبود؛ این مقدار از کل بازار CoinGecko است و با TradingView قابل مقایسه مستقیم نیست."
+            DOMINANCE_CACHE.update({"at": now, "data": result})
+            _record_dominance_snapshot(result, now)
+            result["cache_hit"] = False
+            result["usdt_trend"] = _dominance_history_payload(result)
+            return result
+        except Exception as exc:
+            errors.append("CoinGecko global fallback: " + str(exc)[:140])
 
         if COINMARKETCAP_API_KEY:
             try:
