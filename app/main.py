@@ -3478,6 +3478,7 @@ async def ai_decision(request: Request):
                 "ai_model": ai_ms,
                 "total": round((time.perf_counter() - request_started) * 1000)
             },
+            "ai_engine": {"architecture": "single-call multi-role panel", "roles": ["technical", "liquidity", "macro", "scenario", "risk"], "independent_model_calls": 1, "quota_optimized": True},
             "provider": ai_result.get("provider", "OpenRouter"),
             "model": ai_result.get("model"),
             "updated_at": utc_now(),
