@@ -248,16 +248,39 @@ def record_signal(result, entry_mode="smart"):
     """Create a pending simulated entry from the selected analysis plan."""
     if entry_mode not in ("primary", "smart"):
         return {"recorded": False, "reason": "invalid_entry_mode"}
-    if not isinstance(result, dict) or result.get("signal") not in ("BUY", "SELL"):
-        return {"recorded": False, "reason": "no_directional_signal"}
-    if (result.get("risk_management") or {}).get("risk_gate_passed") is False:
-        return {"recorded": False, "reason": "risk_gate_blocked"}
-    if (result.get("strategy_plan") or {}).get("passed") is False:
-        return {"recorded": False, "reason": "strategy_confluence_not_confirmed"}
+    if not isinstance(result, dict):
+        return {"recorded": False, "reason": "invalid_analysis_result"}
+
+    smart = result.get("smart_entry") or {}
+    smart_plan = {}
+    if entry_mode == "smart":
+        preferred = smart.get("preferred_side")
+        if preferred not in ("long", "short"):
+            return {"recorded": False, "reason": "smart_entry_not_available"}
+        side = "LONG" if preferred == "long" else "SHORT"
+        smart_plan = smart.get(preferred) or {}
+        if not smart_plan.get("available") or smart_plan.get("status") in (
+            "INVALIDATED", "BLOCKED_BY_ECONOMIC_CALENDAR",
+            "BLOCKED_BY_EXECUTION_QUALITY", "BLOCKED_BY_RISK"
+        ):
+            return {"recorded": False, "reason": "smart_entry_not_available",
+                    "smart_status": smart_plan.get("status")}
+        if smart.get("risk_gate_passed") is False:
+            return {"recorded": False, "reason": "smart_entry_risk_gate_blocked"}
+    else:
+        if result.get("signal") not in ("BUY", "SELL"):
+            return {"recorded": False, "reason": "no_directional_signal"}
+        if (result.get("risk_management") or {}).get("risk_gate_passed") is False:
+            return {"recorded": False, "reason": "risk_gate_blocked"}
+        if (result.get("strategy_plan") or {}).get("passed") is False:
+            return {"recorded": False, "reason": "strategy_confluence_not_confirmed"}
+        side = "LONG" if result["signal"] == "BUY" else "SHORT"
+
     if (result.get("execution_quality") or {}).get("blocked"):
         return {"recorded": False, "reason": "execution_quality_blocked"}
     if (result.get("economic_event_risk") or {}).get("entry_blocked_by_calendar"):
         return {"recorded": False, "reason": "economic_calendar_blocked"}
+
     quote = result.get("live_quote") or {}
     market = result.get("market", "crypto")
     if not quote.get("available") or quote.get("is_proxy"):
@@ -265,25 +288,16 @@ def record_signal(result, entry_mode="smart"):
     age = quote.get("age_seconds")
     if age is None or age > (60 if market == "crypto" else 900):
         return {"recorded": False, "reason": "stale_quote"}
-    side = "LONG" if result["signal"] == "BUY" else "SHORT"
+
     try:
         live_price = float(quote["price"])
         if entry_mode == "smart":
-            smart = result.get("smart_entry") or {}
-            smart_plan = smart.get("long" if side == "LONG" else "short") or {}
-            if not smart_plan.get("available") or smart_plan.get("status") in (
-                "INVALIDATED", "BLOCKED_BY_ECONOMIC_CALENDAR", "BLOCKED_BY_EXECUTION_QUALITY"
-            ):
-                return {"recorded": False, "reason": "smart_entry_not_available"}
-            if smart.get("risk_gate_passed") is False:
-                return {"recorded": False, "reason": "smart_entry_risk_gate_blocked"}
-            if smart.get("preferred_side") != ("long" if side == "LONG" else "short"):
-                return {"recorded": False, "reason": "smart_entry_direction_mismatch"}
             zone = smart_plan.get("zone") or {}
             if zone.get("low") is None or zone.get("high") is None:
                 raise ValueError("smart_entry_zone_required")
             entry_low, entry_high = sorted((float(zone["low"]), float(zone["high"])))
-            entry = float(smart_plan.get("entry_reference") or ((entry_low + entry_high) / 2))
+            entry = float(smart_plan.get("entry_reference") or smart_plan.get("entry")
+                          or ((entry_low + entry_high) / 2))
             stop = float(smart_plan["stop_loss"])
             targets = [float(x) for x in smart_plan.get("targets", [])]
             source = "SMART_ENTRY_STRUCTURAL_ZONE"
@@ -301,6 +315,7 @@ def record_signal(result, entry_mode="smart"):
             raise ValueError("two_targets_required")
     except (TypeError, ValueError, KeyError):
         return {"recorded": False, "reason": "no_valid_entry_zone_or_trade_levels"}
+
     risk = entry - stop if side == "LONG" else stop - entry
     if risk <= 0:
         return {"recorded": False, "reason": "invalid_structural_stop"}
@@ -308,6 +323,7 @@ def record_signal(result, entry_mode="smart"):
         return {"recorded": False, "reason": "invalid_long_levels"}
     if side == "SHORT" and (targets[0] >= entry or entry_high >= stop):
         return {"recorded": False, "reason": "invalid_short_levels"}
+
     limits = _portfolio_risk_state()
     initial_balance = limits["equity"]
     risk_cash = limits["risk_cash"]
@@ -317,6 +333,7 @@ def record_signal(result, entry_mode="smart"):
         return {"recorded": False, "reason": "daily_loss_limit_reached", "risk_state": limits}
     if limits["risk_in_use"] + risk_cash > limits["portfolio_risk_limit_cash"]:
         return {"recorded": False, "reason": "portfolio_total_risk_limit", "risk_state": limits}
+
     risk_per_unit = abs(entry - stop)
     quantity = risk_cash / risk_per_unit
     max_leverage = limits["max_leverage"]
@@ -329,20 +346,28 @@ def record_signal(result, entry_mode="smart"):
     filled_entry = live_price if touched else entry
     candle_time = result.get("last_candle_time")
     now = _now()
-    fingerprint = "|".join(str(x) for x in (market, result.get("symbol", ""), result.get("timeframe", ""), candle_time or result.get("updated_at", ""), result["signal"], entry_mode, now))
-    note = "ورود آزمایشی؛ قیمت داخل محدوده بود." if touched else "سفارش شرطی آزمایشی؛ با رسیدن قیمت به نقطه ورود فعال می‌شود."
+    fingerprint = "|".join(str(x) for x in (
+        market, result.get("symbol", ""), result.get("timeframe", ""),
+        candle_time or result.get("updated_at", ""), side, entry_mode, now
+    ))
+    note = ("ورود آزمایشی؛ قیمت داخل محدوده بود." if touched
+            else "سفارش شرطی آزمایشی؛ با رسیدن قیمت به محدوده ورود فعال می‌شود.")
     with _LOCK, _connect() as con:
         existing = con.execute(
             "SELECT id, status FROM paper_trades WHERE market=? AND symbol=? AND timeframe=? AND source=? AND status IN ('PENDING_ENTRY','ACTIVE','TP1_HIT') ORDER BY id DESC LIMIT 1",
             (market, result.get("symbol", ""), result.get("timeframe", ""), source)
         ).fetchone()
         if existing:
-            return {"recorded": False, "duplicate": True, "trade_id": existing["id"], "status": existing["status"], "source": source}
+            return {"recorded": False, "duplicate": True, "trade_id": existing["id"],
+                    "status": existing["status"], "source": source}
         cur = con.execute("""
             INSERT OR IGNORE INTO paper_trades
             (fingerprint, created_at, updated_at, market, symbol, timeframe, side, signal_candle_time, entry_price, entry_low, entry_high, signal_entry, last_quote_price, last_quote_at, stop_loss, target_1, target_2, target_3, status, source, note, quantity, notional, margin_used, leverage, initial_balance, risk_cash)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (fingerprint, now, now, market, result.get("symbol", ""), result.get("timeframe", ""), side, candle_time, filled_entry, entry_low, entry_high, entry, live_price, now, stop, targets[0], targets[1], targets[2] if len(targets) > 2 else None, status, source, note, quantity, notional, margin_used, leverage, initial_balance, risk_cash))
+        """, (fingerprint, now, now, market, result.get("symbol", ""), result.get("timeframe", ""),
+              side, candle_time, filled_entry, entry_low, entry_high, entry, live_price, now,
+              stop, targets[0], targets[1], targets[2] if len(targets) > 2 else None,
+              status, source, note, quantity, notional, margin_used, leverage, initial_balance, risk_cash))
         if cur.rowcount == 0:
             row = con.execute("SELECT id, status FROM paper_trades WHERE fingerprint=?", (fingerprint,)).fetchone()
             return {"recorded": False, "duplicate": True, "trade_id": row["id"], "status": row["status"]}
