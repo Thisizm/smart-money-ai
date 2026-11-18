@@ -312,7 +312,7 @@ def call_openrouter(evidence):
     choices = data.get("choices") or []
     content = ((choices[0].get("message") or {}).get("content") if choices else None)
     if isinstance(content, list):
-        content = "\\n".join(
+        content = "\n".join(
             part.get("text", "") for part in content if isinstance(part, dict)
         )
     if not content or not str(content).strip():
