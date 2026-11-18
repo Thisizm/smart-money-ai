@@ -57,7 +57,7 @@ body.chart-is-fullscreen{overflow:hidden}
 <details class="panel" id="resources-panel"><summary style="cursor:pointer;font-weight:700">وضعیت منابع و اتصال‌ها — برای دیدن جزئیات بزن</summary><div id="providers" class="small" style="margin-top:12px">در حال بررسی…</div></details><div class="panel small">معامله واقعی کاملاً خاموش است. معامله آزمایشی فقط با روشن‌کردن کلید جداگانه در نمودار تحلیل اصلی یا ورود هوشمند فعال می‌شود. کلیدهای API را فقط در Environment Variables در Render وارد کن، نه در چت یا کد عمومی. هیچ سیستم معاملاتی سود تضمینی ندارد.</div></main>
 <script>
 let paperTradesCache=[],paperChart=null,paperChartResizeObserver=null,paperChartQuoteTimer=null,paperChartQuoteLine=null,paperChartSelectedTradeId=null,primaryPaperArmed=false,smartPaperArmed=false,aiBrainChart=null;
-let coins=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","AVAXUSDT","LTCUSDT","TRXUSDT","DOTUSDT","BCHUSDT","NEARUSDT","UNIUSDT","SUIUSDT","TONUSDT","ETCUSDT","APTUSDT","ARBUSDT"];let lastA=null,lastC=null,lastCorr=null,currentAnalysisMarket=null,currentAnalysisSymbol=null,priceChart=null,rsiChart=null,smartEntryChart=null,chartResizeObserver=null,rsiResizeObserver=null,smartEntryResizeObserver=null,livePriceLine=null;
+let coins=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","AVAXUSDT","LTCUSDT","TRXUSDT","DOTUSDT","BCHUSDT","NEARUSDT","UNIUSDT","SUIUSDT","TONUSDT","ETCUSDT","APTUSDT","ARBUSDT"];let lastA=null,lastC=null,lastCorr=null,currentAnalysisMarket=null,currentAnalysisSymbol=null,priceChart=null,rsiChart=null,smartEntryChart=null,chartResizeObserver=null,rsiResizeObserver=null,smartEntryResizeObserver=null,livePriceLine=null,smartEntryCandleSeries=null,smartEntryLivePriceLine=null,smartEntryLastCandleTime=0,smartEntryLiveBar=null;
 document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll("main section").forEach(s=>s.hidden=true);document.getElementById(b.dataset.id).hidden=false;if(b.dataset.id==="dominance")dominance();if(b.dataset.id==="opportunities")loadOpportunities(false)});
 function symbols(){let m=document.getElementById("market").value;const search=document.getElementById("symbol-search");if(search)search.parentElement.style.display=m==="crypto"?"block":"none";filterSymbols();document.getElementById("coin-count").textContent=m==="crypto"?"منبع: Binance Spot | "+coins.length+" جفت فعال USDT":m==="gold"?"منبع فلز: Twelve Data XAU/USD؛ جایگزین Yahoo Finance spot":"منبع نقره: Twelve Data XAG/USD؛ جایگزین Yahoo spot و در صورت خطا COMEX SI=F آتی (نه اسپات و نه Binance)"}
 function filterSymbols(){const m=document.getElementById("market").value,all=m==="crypto"?coins:[m==="gold"?"XAUUSDT":"XAGUSDT"],q=(document.getElementById("symbol-search")?.value||"").trim().toUpperCase(),sel=document.getElementById("symbol"),previous=sel.value,filtered=all.filter(x=>x.toUpperCase().includes(q));sel.innerHTML=filtered.map(x=>'<option value="'+x+'">'+x+'</option>').join("");if(filtered.includes(previous))sel.value=previous;else if(filtered.length)sel.value=filtered[0];document.getElementById("coin-count").textContent=m==="crypto"?"نمایش "+filtered.length+" از "+all.length+" نماد فعال USDT":"نماد فلز"}
@@ -143,17 +143,41 @@ function renderSmartEntryChart(d,plan,side){
  if(!el||!window.LightweightCharts||!Array.isArray(d.chart_candles)||!d.chart_candles.length){if(el)el.textContent="داده نمودار در دسترس نیست";return;}
  if(smartEntryChart){smartEntryChart.remove();smartEntryChart=null}
  if(smartEntryResizeObserver){smartEntryResizeObserver.disconnect();smartEntryResizeObserver=null}
+ smartEntryCandleSeries=null;smartEntryLivePriceLine=null;smartEntryLiveBar=null;smartEntryLastCandleTime=0;
  el.innerHTML="";
  smartEntryChart=LightweightCharts.createChart(el,{width:Math.max(280,el.clientWidth||window.innerWidth-60),height:280,layout:{background:{color:"#0b172a"},textColor:"#cbd6e8",fontFamily:"Tahoma"},grid:{vertLines:{color:"#17253b"},horzLines:{color:"#17253b"}},rightPriceScale:{borderColor:"#405477"},timeScale:{borderColor:"#405477",timeVisible:true},localization:{locale:"en-US"}});
- const cs=smartEntryChart.addCandlestickSeries({upColor:"#28c997",downColor:"#ff7182",borderVisible:false,wickUpColor:"#28c997",wickDownColor:"#ff7182"});
- cs.setData(d.chart_candles);
+ smartEntryCandleSeries=smartEntryChart.addCandlestickSeries({upColor:"#28c997",downColor:"#ff7182",borderVisible:false,wickUpColor:"#28c997",wickDownColor:"#ff7182"});
+ smartEntryCandleSeries.setData(d.chart_candles);
+ smartEntryLastCandleTime=Number(d.chart_candles[d.chart_candles.length-1].time)||0;
  const lines=[];
- const add=(value,color,title)=>{if(value==null||!Number.isFinite(Number(value)))return;cs.createPriceLine({price:Number(value),color,lineWidth:2,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title});lines.push('<span class="legend-chip" style="border-color:'+color+'">'+title+' '+fmt(Number(value))+'</span>')};
+ const add=(value,color,title)=>{if(value==null||!Number.isFinite(Number(value)))return;smartEntryCandleSeries.createPriceLine({price:Number(value),color,lineWidth:2,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title});lines.push('<span class="legend-chip" style="border-color:'+color+'">'+title+' '+fmt(Number(value))+'</span>')};
  if(plan){add(plan.zone?.low,"#38bdf8","کف ناحیه");add(plan.zone?.high,"#38bdf8","سقف ناحیه");add(plan.entry,"#facc15","قیمت ورود هوشمند");add(plan.stop_loss,"#fb7185","حد ضرر");(plan.targets||[]).forEach((x,i)=>add(x,"#4ade80","هدف "+(i+1)));}
  else{lines.push('<span class="small">برای این تحلیل محدوده ورود هوشمند معتبری وجود ندارد.</span>');}
- const q=d.live_quote||{};if(q.available&&d.price_alignment?.aligned!==false)add(q.price,"#7dd3fc","قیمت زنده");
+ const q=d.live_quote||{};if(q.available&&Number.isFinite(Number(q.price))){smartEntryLivePriceLine=smartEntryCandleSeries.createPriceLine({price:Number(q.price),color:"#7dd3fc",lineWidth:2,lineStyle:LightweightCharts.LineStyle.Solid,axisLabelVisible:true,title:"قیمت زنده"});lines.push('<span class="legend-chip" style="border-color:#7dd3fc">قیمت زنده '+fmt(Number(q.price))+'</span>');}
  legend.innerHTML=lines.join("");smartEntryChart.timeScale().fitContent();
  if(typeof ResizeObserver!=="undefined"){smartEntryResizeObserver=new ResizeObserver(()=>{if(smartEntryChart&&el.clientWidth>0)smartEntryChart.applyOptions({width:el.clientWidth})});smartEntryResizeObserver.observe(el)}
+ updateSmartEntryLiveChart(q,d.price_alignment?.aligned!==false);
+}
+function updateSmartEntryLiveChart(q,aligned=true){
+ if(!smartEntryChart||!smartEntryCandleSeries||!q||!q.available)return;
+ const price=Number(q.price);if(!Number.isFinite(price)||price<=0)return;
+ if(smartEntryLivePriceLine){try{smartEntryLivePriceLine.applyOptions({price})}catch(e){}}
+ // Keep the live quote visible even if source alignment blocks new entries.
+ if(q.is_proxy||aligned===false)return;
+ const tfSeconds={"5m":300,"15m":900,"1h":3600,"4h":14400,"1d":86400,"1w":604800};
+ const seconds=tfSeconds[lastA?.timeframe||tf.value]||900;
+ const now=Math.floor(Date.now()/1000),barTime=Math.floor(now/seconds)*seconds;
+ if(barTime<=smartEntryLastCandleTime)return;
+ if(!smartEntryLiveBar||smartEntryLiveBar.time!==barTime){
+  const previous=smartEntryLiveBar||((lastA?.chart_candles||[]).slice(-1)[0]);
+  const open=Number(previous?.close)||price;
+  smartEntryLiveBar={time:barTime,open,high:Math.max(open,price),low:Math.min(open,price),close:price};
+ }else{
+  smartEntryLiveBar.high=Math.max(smartEntryLiveBar.high,price);
+  smartEntryLiveBar.low=Math.min(smartEntryLiveBar.low,price);
+  smartEntryLiveBar.close=price;
+ }
+ try{smartEntryCandleSeries.update({...smartEntryLiveBar})}catch(e){}
 }
 
 function syncPaperEntryToggles(trades){
@@ -339,6 +363,7 @@ async function refreshLiveQuote(){
   // A mismatch blocks entries, but must never hide the actual live quote.
   const sameSource=!lastA.chart_source_symbol||!d.quote?.source_symbol||String(lastA.chart_source_symbol).replace(/[^A-Z0-9]/gi,"").toUpperCase()===String(d.quote.source_symbol).replace(/[^A-Z0-9]/gi,"").toUpperCase();
   if(livePriceLine&&d.quote&&d.quote.available&&sameSource){try{livePriceLine.applyOptions({price:d.quote.price})}catch(e){}}
+  updateSmartEntryLiveChart(d.quote,aligned);
  }catch(e){document.getElementById("livequote").textContent="به‌روزرسانی قیمت زنده ناموفق بود: "+e.message}
 }
 
