@@ -2974,7 +2974,7 @@ AI_BRAIN_INFLIGHT = set()
 AI_BRAIN_CACHE_LOCK = threading.Lock()
 
 
-def _compact_ai_evidence(value, depth=0, list_limit=8, string_limit=500, key_limit=55):
+def _compact_ai_evidence(value, depth=0, list_limit=6, string_limit=320, key_limit=40):
     """Keep decision-relevant evidence while excluding chart/history payloads."""
     if depth > 8:
         return "[عمق داده محدود شد]"
@@ -3124,17 +3124,17 @@ async def ai_decision(request: Request):
         # Compaction only removes redundant transport/chart payloads, not evidence groups.
         evidence = _compact_ai_evidence(raw_evidence)
         encoded = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), default=str)
-        if len(encoded) > 42000:
+        if len(encoded) > 30000:
             evidence = _compact_ai_evidence(
-                raw_evidence, list_limit=4, string_limit=240, key_limit=32
+                raw_evidence, list_limit=6, string_limit=220, key_limit=30
             )
             encoded = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), default=str)
-        if len(encoded) > 52000:
+        if len(encoded) > 38000:
             compact_mtf = mtf.get("timeframes", []) if isinstance(mtf, dict) else []
             evidence = {
                 "market": market, "symbol": symbol, "requested_timeframe": timeframe,
                 "selected_timeframe_analysis": _compact_ai_evidence(
-                    technical, list_limit=3, string_limit=160, key_limit=24
+                    technical, list_limit=6, string_limit=180, key_limit=24
                 ),
                 "all_timeframes": _compact_ai_evidence(
                     compact_mtf, list_limit=6, string_limit=180, key_limit=20
@@ -3146,7 +3146,7 @@ async def ai_decision(request: Request):
                 "instructions": {"live_trading_enabled": False}
             }
             encoded = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), default=str)
-        if len(encoded) > 52000:
+        if len(encoded) > 38000:
             raise RuntimeError("حجم داده حتی پس از خلاصه‌سازی از حد مجاز بیشتر است؛ گزارش فشرده‌سازی لازم است.")
 
         ai_started = time.perf_counter()
