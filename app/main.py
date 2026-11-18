@@ -1572,11 +1572,35 @@ def api_analyze(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str 
     analysis_started = time.perf_counter()
     _set_analysis_progress(request_id, "candles", "دریافت کندل‌های تاریخی از Binance یا Twelve Data و بررسی تعداد/منبع داده")
     candles = get_candles(market, symbol, timeframe)
+    # Never present old provider history as a current 4h/daily chart or use it
+    # to create a live trade plan. Metal markets can close over weekends, so
+    # their freshness windows are deliberately wider than crypto's.
+    freshness_limits = {
+        "crypto": {"5m": 45 * 60, "15m": 2 * 3600, "1h": 6 * 3600, "4h": 12 * 3600, "1d": 48 * 3600, "1w": 10 * 86400},
+        "gold": {"5m": 6 * 3600, "15m": 12 * 3600, "1h": 24 * 3600, "4h": 72 * 3600, "1d": 5 * 86400, "1w": 21 * 86400},
+        "silver": {"5m": 6 * 3600, "15m": 12 * 3600, "1h": 24 * 3600, "4h": 72 * 3600, "1d": 5 * 86400, "1w": 21 * 86400},
+    }
+    closed_for_freshness = completed_candles(candles, timeframe)
+    if not closed_for_freshness:
+        raise HTTPException(502, "کندل بسته‌شده معتبری از منبع قیمت دریافت نشد؛ تحلیل متوقف شد.")
+    latest_candle_epoch = int(closed_for_freshness[-1]["time"] // 1000)
+    candle_age_seconds = max(0, int(time.time() - latest_candle_epoch))
+    max_candle_age = freshness_limits.get(market, {}).get(timeframe, 24 * 3600)
+    if candle_age_seconds > max_candle_age:
+        latest_text = datetime.fromtimestamp(latest_candle_epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        raise HTTPException(
+            502,
+            "داده کندل این تایم‌فریم قدیمی است و برای تحلیل/ورود قابل استفاده نیست. "
+            + "آخرین کندل بسته‌شده: " + latest_text
+            + " | سن داده: " + str(candle_age_seconds // 3600) + " ساعت"
+            + " | منبع: " + str(closed_for_freshness[-1].get("source") or "نامشخص")
+            + ". تا دریافت کندل تازه، نمودار و سیگنال جدید نمایش داده نمی‌شود."
+        )
     _set_analysis_progress(request_id, "technical_core", "محاسبه ساختار بازار، BOS/CHOCH، نقدینگی، FVG، Order Block و اندیکاتورها")
     result = analyze(candles, market, symbol, timeframe)
     _set_analysis_progress(request_id, "live_quote", "گرفتن قیمت زنده و بررسی تازگی قیمت و اسپرد")
     result["analysis_price"] = result.get("price")
-    result["candle_source"] = (candles[-1].get("source") if candles else None) or ("Binance Spot" if market == "crypto" else "Twelve Data / Yahoo Finance metals fallback")
+    result["candle_source"] = (candles[-1].get("source") if candles else None) or ("Binance Spot" if market == "crypto" else "منبع فلز نامشخص؛ نام منبع تأیید نشده")
     result["live_quote"] = get_live_quote(market, symbol)
     _set_analysis_progress(request_id, "derivatives", "دریافت Funding، Open Interest، نسبت خریدار/فروشنده و دفتر سفارش Binance (فقط کریپتو)")
     quote = result["live_quote"]
