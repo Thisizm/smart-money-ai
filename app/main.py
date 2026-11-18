@@ -2077,6 +2077,62 @@ def _build_dominance_payload(source, raw):
 
 
 
+
+def _build_coinmarketcap_keyless_dominance():
+    """Use CoinMarketCap's own global denominator and USDT market cap."""
+    base = "https://pro-api.coinmarketcap.com/public-api"
+    global_raw = fetch_json(
+        base + "/v1/global-metrics/quotes/latest?convert=USD", timeout=15
+    )
+    global_data = global_raw.get("data") or {}
+    quote = (global_data.get("quote") or {}).get("USD") or {}
+    total = _as_float(quote.get("total_market_cap"))
+    btc = _as_float(global_data.get("btc_dominance"))
+    eth = _as_float(global_data.get("eth_dominance"))
+    updated = _dominance_timestamp(global_data.get("last_updated") or quote.get("last_updated"))
+    if not total or total <= 0 or btc is None or eth is None:
+        raise RuntimeError("CoinMarketCap global metrics missing total cap or BTC/ETH dominance")
+
+    usdt_raw = fetch_json(
+        base + "/v3/cryptocurrency/quotes/latest?symbol=USDT&convert=USD",
+        timeout=15
+    )
+    usdt_data = usdt_raw.get("data") or {}
+    usdt_items = usdt_data.get("USDT") if isinstance(usdt_data, dict) else None
+    if isinstance(usdt_items, dict):
+        usdt_item = usdt_items
+    elif isinstance(usdt_items, list) and usdt_items:
+        usdt_item = usdt_items[0]
+    else:
+        raise RuntimeError("CoinMarketCap did not return the USDT quote")
+    usdt_quote = ((usdt_item.get("quote") or {}).get("USD") or {})
+    usdt_cap = _as_float(usdt_quote.get("market_cap"))
+    if usdt_cap is None or usdt_cap <= 0:
+        raise RuntimeError("CoinMarketCap USDT market cap is missing")
+
+    usdt = usdt_cap / total * 100.0
+    if not (0 <= btc <= 100 and 0 <= eth <= 100 and 0 <= usdt <= 100):
+        raise RuntimeError("CoinMarketCap dominance values are outside valid range")
+    return {
+        "available": True,
+        "btc": round(btc, 4), "eth": round(eth, 4), "usdt": round(usdt, 4),
+        "others_ex_btc_eth_usdt": round(max(0.0, 100.0 - btc - eth - usdt), 4),
+        "total_market_cap_usd": total,
+        "total_volume_24h_usd": _as_float(quote.get("total_volume_24h")),
+        "updated_at": utc_now(),
+        "source_updated_at": updated.isoformat() if updated else None,
+        "source_age_seconds": max(0, int(time.time() - updated.timestamp())) if updated else None,
+        "source": "CoinMarketCap global metrics + USDT market cap",
+        "methodology": "coinmarketcap_common_denominator",
+        "stale": False,
+        "note": (
+            "BTC.D و ETH.D از شاخص جهانی CoinMarketCap و USDT.D از ارزش بازار USDT تقسیم بر همان ارزش کل بازار محاسبه می‌شود؛ "
+            "بنابراین هر سه از مخرج یکسان استفاده می‌کنند. به‌روزرسانی آمار جهانی CoinMarketCap حدود هر ۵ دقیقه است. "
+            "این منبع مستقل است و عدد رسمی TradingView CRYPTOCAP نیست؛ اختلاف جزئی به‌دلیل تفاوت سبد بازار ممکن است."
+        )
+    }
+
+
 def _build_top125_dominance_payload():
     """Estimate TradingView-style dominance from the top-125 universe.
     Circulating supply comes from CoinGecko; Binance Spot USDT prices are
@@ -2265,19 +2321,30 @@ def dominance():
             return result
 
         errors = []
-        headers = {"x-cg-demo-api-key": COINGECKO_API_KEY} if COINGECKO_API_KEY else {}
         try:
-            raw = fetch_json("https://api.coingecko.com/api/v3/global", headers=headers, timeout=12)
-            result = _build_dominance_payload("CoinGecko", raw)
-            result["methodology"] = "coingecko_global"
-            result["note"] += " این مقدار از داده کل بازار CoinGecko است؛ با USDT.D در TradingView به‌دلیل تفاوت سبد و روش محاسبه ممکن است اختلاف داشته باشد."
+            result = _build_coinmarketcap_keyless_dominance()
             DOMINANCE_CACHE.update({"at": now, "data": result})
             _record_dominance_snapshot(result, now)
             result["cache_hit"] = False
             result["usdt_trend"] = _dominance_history_payload(result)
             return result
         except Exception as exc:
-            errors.append("CoinGecko global: " + str(exc)[:140])
+            errors.append("CoinMarketCap public: " + str(exc)[:140])
+
+        headers = {"x-cg-demo-api-key": COINGECKO_API_KEY} if COINGECKO_API_KEY else {}
+        try:
+            raw = fetch_json("https://api.coingecko.com/api/v3/global", headers=headers, timeout=12)
+            result = _build_dominance_payload("CoinGecko", raw)
+            result["fallback_used"] = True
+            result["methodology"] = "coingecko_global_fallback"
+            result["note"] += " منبع اصلی CoinMarketCap در دسترس نبود؛ این مقدار جایگزین CoinGecko است و روش محاسبه متفاوتی دارد."
+            DOMINANCE_CACHE.update({"at": now, "data": result})
+            _record_dominance_snapshot(result, now)
+            result["cache_hit"] = False
+            result["usdt_trend"] = _dominance_history_payload(result)
+            return result
+        except Exception as exc:
+            errors.append("CoinGecko fallback: " + str(exc)[:140])
 
         if COINMARKETCAP_API_KEY:
             try:
