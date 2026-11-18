@@ -50,7 +50,7 @@ def build_prompt(evidence):
         "conditional_scenarios:{bullish:{trigger_level:number|null,condition:string,entry_zone:{low:number,high:number}|null,stop_loss:number|null,targets:[number]}, "
         "bearish:{trigger_level:number|null,condition:string,entry_zone:{low:number,high:number}|null,stop_loss:number|null,targets:[number]}}, "
         "bullish_factors:[string], bearish_factors:[string], conflicts:[string], risk_flags:[string], "
-        "data_quality:[string], setup_quality:integer}. setup_quality فقط امتیاز کیفیت شواهد از 0 تا 100 است، نه احتمال برد. "
+        "data_quality:[string], setup_quality:integer, agent_panel:{technical:{verdict:string,evidence:[string],confidence:integer},liquidity:{verdict:string,evidence:[string],confidence:integer},macro:{verdict:string,evidence:[string],confidence:integer},scenario:{verdict:string,evidence:[string],confidence:integer},risk:{verdict:string,evidence:[string],confidence:integer},final_arbitration:string}}. setup_quality فقط امتیاز کیفیت شواهد از 0 تا 100 است، نه احتمال برد. "
         "سطوح حمایت، مقاومت و تریگر را فقط از قیمت‌ها/پیوت‌ها/سطوح موجود در شواهد استخراج کن؛ اگر سطح قابل اتکا نیست null یا فهرست خالی بده. "
         "برای WAIT هم سناریوی شرطی خرید و فروش را جداگانه توضیح بده؛ این سناریوها سیگنال فعال نیستند. برای هر سناریو شرط دقیق بسته‌شدن کندل و رفتار لازم بعد از شکست/برگشت، محدوده ورود پس از تأیید، حدضرر و اهداف را فقط اگر از شواهد قابل تعیین است بده؛ وگرنه null بگذار. "
         "عبارت مبهمی مثل «بالای X بسته شود» کافی نیست: تایم‌فریم کندل، سطح و سپس رفتار لازم برای ورود را روشن کن. "
