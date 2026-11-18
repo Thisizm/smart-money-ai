@@ -2457,26 +2457,18 @@ def news(asset: str = "gold"):
 
     params = urllib.parse.urlencode({
         "query": news_query(asset), "mode": "ArtList", "format": "json",
-        "maxrecords": 15, "timespan": "3d", "sort": "DateDesc"
+        "maxrecords": 5, "timespan": "2d", "sort": "DateDesc"
     })
     url = "https://api.gdeltproject.org/api/v2/doc/doc?" + params
     try:
-        # GDELT asks clients to keep requests at least five seconds apart.
-        # Serialize requests so simultaneous dashboard calls respect that limit.
+        # Never make the AI analysis wait for GDELT's five-second cooldown.
+        # If a request was just sent, use cached headlines or mark news unavailable.
         with GDELT_LOCK:
             wait_seconds = 5.2 - (time.monotonic() - GDELT_LAST_REQUEST_AT)
             if wait_seconds > 0:
-                time.sleep(wait_seconds)
+                raise RuntimeError("GDELT در فاصله محدودیت درخواست است؛ خبر برای این نوبت رد شد.")
             GDELT_LAST_REQUEST_AT = time.monotonic()
-            try:
-                raw = fetch_json(url, timeout=20)
-            except RuntimeError as first_error:
-                if "HTTP 429" not in str(first_error):
-                    raise
-                # One delayed retry handles a transient upstream rate-limit response.
-                time.sleep(5.5)
-                GDELT_LAST_REQUEST_AT = time.monotonic()
-                raw = fetch_json(url, timeout=20)
+            raw = fetch_json(url, timeout=8)
 
         articles = []
         for item in raw.get("articles", []):
@@ -2536,7 +2528,7 @@ def fred_observation(series_id):
         "series_id": series_id, "api_key": FRED_API_KEY,
         "file_type": "json", "sort_order": "desc", "limit": 2
     })
-    data = fetch_json("https://api.stlouisfed.org/fred/series/observations?" + params)
+    data = fetch_json("https://api.stlouisfed.org/fred/series/observations?" + params, timeout=8)
     values = [x for x in data.get("observations", []) if x.get("value") not in (None, ".", "")]
     if not values:
         return {"series": series_id, "available": False}
@@ -2552,8 +2544,12 @@ def fred_observation(series_id):
     }
 
 
+MACRO_SCOPE_CACHE = {}
+
 @app.get("/api/macro")
-def macro():
+def macro(asset: str = "all"):
+    if asset not in ("all", "crypto", "gold", "silver"):
+        raise HTTPException(400, "asset نامعتبر است")
     if not FRED_API_KEY:
         return {
             "available": False, "source": "FRED",
@@ -2561,28 +2557,36 @@ def macro():
             "indicators": [],
             "not_connected": ["ICE DXY exact index", "Gold ETF flows", "Silver ETF flows", "central-bank gold purchases"]
         }
+    # Crypto needs only the dollar, policy rate and Treasury yields. Metals
+    # additionally use inflation and oil; slow secondary series are excluded.
+    core_ids = ["DTWEXBGS", "FEDFUNDS", "DGS10", "DFII10", "T10YIE"]
+    metal_ids = core_ids + ["CPIAUCSL", "WTISPLC"]
+    selected_ids = list(FRED_SERIES) if asset == "all" else (core_ids if asset == "crypto" else metal_ids)
     now = datetime.now(timezone.utc).timestamp()
-    if MACRO_CACHE["data"] and now - MACRO_CACHE["at"] < 3600:
-        return MACRO_CACHE["data"]
+    cached = MACRO_SCOPE_CACHE.get(asset)
+    if cached and now - cached["at"] < 3600:
+        return cached["data"]
     indicators_by_id = {}
     errors = []
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        future_map = {pool.submit(fred_observation, series_id): series_id for series_id in FRED_SERIES}
+    with ThreadPoolExecutor(max_workers=min(7, len(selected_ids))) as pool:
+        future_map = {pool.submit(fred_observation, series_id): series_id for series_id in selected_ids}
         for future in as_completed(future_map):
             series_id = future_map[future]
             try:
                 indicators_by_id[series_id] = future.result()
             except Exception as exc:
                 errors.append(series_id + ": " + str(exc)[:100])
-    indicators = [indicators_by_id[key] for key in FRED_SERIES if key in indicators_by_id]
+    indicators = [indicators_by_id[key] for key in selected_ids if key in indicators_by_id]
     result = {
         "available": any(item.get("available") for item in indicators), "source": "Federal Reserve Economic Data (FRED)",
-        "indicators": indicators, "errors": errors,
+        "asset_scope": asset, "indicators": indicators, "errors": errors,
         "not_connected": ["ICE DXY exact index", "Gold ETF flows", "Silver ETF flows", "central-bank gold purchases"],
         "updated_at": utc_now(),
-        "note": "برخی شاخص‌ها با تأخیر منتشر می‌شوند؛ تاریخ هر مشاهده کنار مقدار آمده است."
+        "note": "فقط شاخص‌های مرتبط با این بازار دریافت شدند؛ تاریخ هر مشاهده کنار مقدار آمده است."
     }
-    MACRO_CACHE.update({"at": now, "data": result})
+    MACRO_SCOPE_CACHE[asset] = {"at": now, "data": result}
+    if asset == "all":
+        MACRO_CACHE.update({"at": now, "data": result})
     return result
 
 
@@ -2601,10 +2605,10 @@ def cot_positions(asset):
     params = urllib.parse.urlencode({
         "$where": "commodity_name = '" + commodity + "'",
         "$order": "report_date_as_yyyy_mm_dd DESC",
-        "$limit": 60
+        "$limit": 24
     })
     try:
-        rows = fetch_json("https://publicreporting.cftc.gov/resource/72hh-3qpy.json?" + params, timeout=20)
+        rows = fetch_json("https://publicreporting.cftc.gov/resource/72hh-3qpy.json?" + params, timeout=8)
         if not isinstance(rows, list) or not rows:
             raise RuntimeError("CFTC returned no matching rows")
 
@@ -2766,8 +2770,11 @@ def market_context(asset: str = "gold"):
     # Macro, headlines and COT are independent sources. Fetch them together:
     # waiting for one provider should not add the latency of the others.
     context_tasks = {
-        "macro": macro,
-        "news": lambda: news(asset),
+        "macro": lambda: macro(asset),
+        # Crypto macro context is limited to rates, USD and Treasury yields.
+        # Headlines are intentionally omitted from crypto AI evidence.
+        "news": (lambda: news(asset)) if asset in ("gold", "silver") else
+                (lambda: {"available": False, "articles": [], "note": "برای کریپتو خبر عمومی در تحلیل AI دریافت نمی‌شود؛ نرخ بهره و دلار بررسی می‌شوند."}),
         "cot": (lambda: cot_positions(asset)) if asset in ("gold", "silver") else
                (lambda: {"available": False, "note": "COT برای کریپتو در این بخش ارائه نمی‌شود."})
     }
