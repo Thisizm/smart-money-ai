@@ -2001,6 +2001,11 @@ def api_backtest(market: str = "crypto", symbol: str = "BTCUSDT", timeframe: str
 def multi_timeframe(market: str = "crypto", symbol: str = "BTCUSDT"):
     timeframes = ("5m", "15m", "1h", "4h", "1d", "1w")
     weights = {"5m": 1, "15m": 1, "1h": 2, "4h": 3, "1d": 4, "1w": 5}
+    freshness_limits = {
+        "crypto": {"5m": 45 * 60, "15m": 2 * 3600, "1h": 6 * 3600, "4h": 12 * 3600, "1d": 48 * 3600, "1w": 10 * 86400},
+        "gold": {"5m": 6 * 3600, "15m": 12 * 3600, "1h": 24 * 3600, "4h": 72 * 3600, "1d": 5 * 86400, "1w": 21 * 86400},
+        "silver": {"5m": 6 * 3600, "15m": 12 * 3600, "1h": 24 * 3600, "4h": 72 * 3600, "1d": 5 * 86400, "1w": 21 * 86400},
+    }
     by_timeframe = {}
     with ThreadPoolExecutor(max_workers=6) as pool:
         future_map = {
@@ -2009,25 +2014,67 @@ def multi_timeframe(market: str = "crypto", symbol: str = "BTCUSDT"):
         for future in as_completed(future_map):
             tf = future_map[future]
             try:
-                by_timeframe[tf] = analyze(future.result(), market, symbol, tf)
+                candles = future.result()
+                closed = completed_candles(candles, tf)
+                if not closed:
+                    raise RuntimeError("کندل بسته‌شده معتبری دریافت نشد")
+                latest_ms = int(closed[-1].get("time") or 0)
+                age_seconds = max(0, int(time.time() - latest_ms / 1000))
+                max_age = freshness_limits.get(market, {}).get(tf, 24 * 3600)
+                if age_seconds > max_age:
+                    latest_text = datetime.fromtimestamp(latest_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                    by_timeframe[tf] = {
+                        "timeframe": tf, "available": False, "stale": True,
+                        "last_closed_candle_time": latest_text,
+                        "candle_age_seconds": age_seconds, "max_age_seconds": max_age,
+                        "error": "داده کهنه است؛ از محاسبه بایاس و هم‌سویی حذف شد."
+                    }
+                    continue
+                item = analyze(candles, market, symbol, tf)
+                item["available"] = True
+                item["stale"] = False
+                item["candle_age_seconds"] = age_seconds
+                item["max_candle_age_seconds"] = max_age
+                item["last_closed_candle_time"] = datetime.fromtimestamp(
+                    latest_ms / 1000, tz=timezone.utc
+                ).isoformat()
+                by_timeframe[tf] = item
             except Exception as exc:
                 detail = exc.detail if isinstance(exc, HTTPException) else str(exc)[:150]
-                by_timeframe[tf] = {"timeframe": tf, "error": detail}
-    results = [by_timeframe[tf] for tf in timeframes]
-    available = [item for item in results if "signal" in item]
-    weighted_score = sum(
+                by_timeframe[tf] = {"timeframe": tf, "available": False, "error": detail}
+    results = [by_timeframe.get(tf, {"timeframe": tf, "available": False, "error": "داده دریافت نشد"}) for tf in timeframes]
+    available = [item for item in results if item.get("available") and "signal" in item]
+    # Keep actionable signal consensus separate from directional bias. WAIT can
+    # still carry a valid bullish/bearish bias, but never counts as an entry signal.
+    signal_score = sum(
         weights[item["timeframe"]] * (1 if item["signal"] == "BUY" else -1 if item["signal"] == "SELL" else 0)
         for item in available
     )
-    overall = "BUY" if weighted_score >= 5 else "SELL" if weighted_score <= -5 else "WAIT"
-    total_weight = sum(weights[item["timeframe"]] for item in available)
-    alignment = round(abs(weighted_score) / total_weight * 100, 1) if total_weight else 0.0
+    signal_weight = sum(weights[item["timeframe"]] for item in available)
+    overall = "BUY" if signal_score >= 5 else "SELL" if signal_score <= -5 else "WAIT"
+    signal_alignment = round(abs(signal_score) / signal_weight * 100, 1) if signal_weight else 0.0
+
+    bullish_bias_weight = sum(weights[item["timeframe"]] for item in available if item.get("bias") == "صعودی")
+    bearish_bias_weight = sum(weights[item["timeframe"]] for item in available if item.get("bias") == "نزولی")
+    directional_weight = bullish_bias_weight + bearish_bias_weight
+    bias_score = bullish_bias_weight - bearish_bias_weight
+    overall_bias = "صعودی" if bias_score > 0 else "نزولی" if bias_score < 0 else "خنثی"
+    bias_alignment = (
+        round(max(bullish_bias_weight, bearish_bias_weight) / directional_weight * 100, 1)
+        if directional_weight else 0.0
+    )
     return {
         "market": market, "symbol": symbol, "overall": overall,
-        "weighted_score": weighted_score, "alignment_percent": alignment,
+        "weighted_score": signal_score, "alignment_percent": bias_alignment,
+        "signal_alignment_percent": signal_alignment,
+        "overall_bias": overall_bias, "bias_weighted_score": bias_score,
+        "bullish_bias_weight": bullish_bias_weight,
+        "bearish_bias_weight": bearish_bias_weight,
+        "valid_timeframes": len(available),
+        "stale_timeframes": [item["timeframe"] for item in results if item.get("stale")],
         "live_quote": get_live_quote(market, symbol),
         "timeframes": results, "updated_at": utc_now(),
-        "note": "قیمت زنده جدا از قیمت کندل بسته‌شده است؛ تایم‌فریم‌های بالاتر وزن بیشتری دارند و امتیاز وزنی احتمال موفقیت نیست."
+        "note": "هم‌سویی بایاس فقط از تایم‌فریم‌های دارای کندل تازه محاسبه می‌شود؛ WAIT همچنان می‌تواند بایاس صعودی/نزولی داشته باشد اما سیگنال ورود محسوب نمی‌شود. داده کهنه از هر دو محاسبه حذف می‌شود."
     }
 
 
